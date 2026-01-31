@@ -1,0 +1,994 @@
+"""
+Pydantic v2 Schemas for PDS Stress-Testing Engine
+
+These schemas define the contract layer between API, engine, and storage.
+All data flows through these typed schemas to ensure consistency and validation.
+
+Architecture Note:
+- Schemas are the single source of truth for data structures
+- No business logic should be implemented here
+- All validation rules are declarative
+- Schemas support both API and storage layer conversions
+"""
+
+from datetime import datetime
+from enum import Enum
+from typing import Any, Dict, List, Optional
+from uuid import UUID
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+
+# ============================================================================
+# ENUMS - Domain-specific type constraints
+# ============================================================================
+
+
+class EdgeType(str, Enum):
+    """
+    Types of directed relationships between hypotheses in the hypothesis graph.
+    
+    - REINFORCES: Source hypothesis strengthens the likelihood of target hypothesis
+    - CONTRADICTS: Source hypothesis weakens the likelihood of target hypothesis  
+    - DEPENDS_ON: Source hypothesis requires target hypothesis to be true
+    """
+
+    REINFORCES = "reinforces"
+    CONTRADICTS = "contradicts"
+    DEPENDS_ON = "depends_on"
+
+
+class TimeHorizon(str, Enum):
+    """
+    Expected timeframe for hypothesis effects to manifest.
+    
+    Time horizons affect simulation activation probabilities:
+    - IMMEDIATE: 0-3 months (highest activation rate)
+    - SHORT_TERM: 3-12 months
+    - MEDIUM_TERM: 1-3 years
+    - LONG_TERM: 3+ years (lowest activation rate)
+    """
+
+    IMMEDIATE = "immediate"
+    SHORT_TERM = "short_term"
+    MEDIUM_TERM = "medium_term"
+    LONG_TERM = "long_term"
+
+
+class S
+    Core hypothesis schema - represents a mechanistic adaptation claim.
+    
+    A hypothesis is structured as:
+    Trigger → Stakeholder Response → Primary Effects → Secondary Effects
+    
+    Hypotheses are the fundamental unit of the stress-testing system.
+    They represent explicit, falsifiable claims about how stakeholders adapt
+    to policy changes, NOT predictions about what will happen.
+    """
+
+    hid: str = Field(
+        ...,
+        description="Unique hypothesis identifier following pattern H### (e.g., H001, H042)",
+        pattern=r"^H\d+$",
+        examples=["H001", "H042"],
+    )
+    
+    stakeholders: List[str] = Field(
+        ...,
+        min_length=1,
+        description="List of stakeholder groups affected by this hypothesis",
+        examples=[["Elderly beneficiaries", "PDS administrators"]],
+    )
+    
+    triggers: List[str] = Field(
+        ...,
+        min_length=1,
+        description="Policy changes or conditions that activate this hypothesis",
+        examples=[["Biometric authentication mandate", "Network connectivity requirements"]],
+    )
+    
+    mechanism: str = Field(
+        ...,
+        min_length=10,
+        description="Causal mechanism describing how stakeholders adapt to triggers",
+        examples=["Elderly beneficiaries with worn fingerprints face repeated authentication failures"],
+    )
+    
+    primary_effects: List[str] = Field(
+        ...,
+        min_length=1,
+        description="Direct, first-order consequences of the adaptation mechanism",
+        examples=[["Increased authentication failure rates", "Denial of food rations"]],
+    )
+    
+    secondary_effects: List[str] = Field(
+        default_factory=list,
+        description="Indirect, cascading, or longer-term consequences",
+        examples=[["Nutrition deprivation in vulnerable households", "Loss of trust in PDS"]],
+    ) (Edges and Graph Structure)
+# ============================================================================
+
+
+# Backward compatibility alias
+GraphEdge = Edge
+GraphEdgeCreate = EdgeCreate
+
+
+# Legacy GraphEdge class (deprecated, use Edge instead)
+class _Edge(BaseModel):
+    """
+    Directed edge in the hypothesis graph.
+    
+    Represents a causal or logical relationship between two hypotheses.
+    Edges are directional: source → target.
+    
+    Graph structure enables:
+    - Belief propagation along reinforcement chains
+    - Contradiction detection and constraint application
+    - Dependency validation during simulation
+    """
+
+    source_hid: str = Field(
+        ...,
+        description="Source hypothesis HID (tail of directed edge)",
+        pattern=r"^H\d+$",
+    )
+    
+    target_hid: str = Field(
+        ...,
+        description="Target hypothesis HID (head of directed edge)",
+        pattern=r"^H\d+$",
+    )
+    
+    edge_type: EdgeType = Field(
+        ...,
+        description="Type of relationship: reinforces, contradicts, or depends_on",
+    )
+    
+    strength: Optional[float] = Field(
+        None,
+        ge=0.0,
+        le=1.0,
+        description="Optional strength/confidence of relationship [0.0, 1.0]",
+        examState(BaseModel):
+    """
+    Probabilistic belief state over all hypotheses at a point in time.
+    
+    Maintains P(H_i) for each hypothesis i, where P(H_i) ∈ [0, 1].
+    
+    Beliefs are updated via Bayesian logic (NO LLMs) based on:
+    - Evidence signals (weak, noisy observations)
+    - Graph constraints (reinforcement/contradiction propagation)
+    
+    Belief states are time-indexed and immutable - each update creates a new state.
+    This enables:
+    - Temporal belief tracking
+    - Audit trail of all updates
+    - Rollback to previous states
+    """
+
+    id: UUID = Field(..., description="System-generated unique identifier for this belief state")
+    
+    run_id: UUID = Field(..., description="Foreign key to parent run")
+    
+    beliefs: Dict[str, float] = Field(
+        ...,
+        description="Map of HID -> probability P(H). All values must be in [0.0, 1.0]",
+        examples=[{"H001": 0.75, "H002": 0.45, "H003": 0.60}],
+    )
+    
+    explanation_log: List[str] = Field(
+        default_factory=list,
+        description="Human-readable log of all belief updates with explanations (for auditability)",
+        examples=[
+            [
+                "Initialized 20 beliefs with uniform prior P=0.5",
+                "H001: 0.500 ↑ 0.650 | Signal: grievance (strength=0.70)",
+                "H002: 0.500 ↓ 0.380 | Graph constraint adjustment (-0.12)",
+            ]
+        ],
+    )
+    
+    timestamp: datetime = Field(
+        ...,
+        description="Timestamp when this belief state was created (for temporal ordering)",
+    )
+
+    model_config = ConfigDict(from_attributes=True)
+
+    @field_valid (Evidence)
+# ============================================================================
+
+
+class SignalBase(BaseModel):
+    """
+    Base schema for evidence signals.
+    
+    Signals represent weak, noisy evidence from the real world that can update
+    belief states. Examples:
+    - Grievances filed by beneficiaries
+    - Administrative circulars from government
+    - Media reports about policy implementation
+    - Audit findings
+    - Court observations or rulings
+    - Field reports from monitoring
+    
+    CRITICAL: Signals are NOT treated as ground truth. They are probabilistically
+    integrated into beliefs based on:
+    - Signal type and source credibility (via strength parameter)
+    - Relevance to affected hypotheses
+    - Consistency with graph structure
+    """
+
+    signal_type: SignalType = Field(
+        ...,
+        description="Category of evidence signal (determines default interpretation)",
+    )
+    
+    content: str = Field(
+        ...,
+        min_length=10,
+        description="Human-readable description or summary of the observed evidence",
+        examples=[
+            "Multiple complaints from elderly beneficiaries about fingerprint failures in rural Maharashtra"
+        ],
+    )
+    
+    source: str = Field(
+        ...,
+        min_length=3 (Simulation Results)
+# ============================================================================
+
+
+class TrajectoryStep(BaseModel):
+    """
+    A single time step in a simulated trajectory.
+    
+    Each step represents:
+    - Which hypotheses are currently active
+    - What cumulative effects have occurred up to this point
+    - Optional notes about significant events at this step
+    """
+
+    step: int = Field(
+        ...,
+        ge=0,
+        description="Step number in the trajectory (0-indexed)",
+    )
+    
+    activated_hids: List[str] = Field(
+        ...,
+        description="List of hypothesis HIDs that are active at this step",
+        examples=[["H001", "H002", "H009"]],
+    )
+    
+    cumulative_effects: List[str] = Field(
+        ...,
+        description="All effects that have accumulated from activated hypotheses up to this step",
+        examples=[["Increased authentication failures", "Rise in grievances", "Media scrutiny"]],
+    )
+    
+    notes: Optional[str] = Field(
+        None,
+        description="Optional notes about significant events or transitions at this step",
+    )
+
+    @field_validator("step")
+    @classmethod
+    def validate_step_non_negative(cls, v: int) -> int:
+        """Ensure step number is non-negative."""
+        if v < 0:
+            raise ValueError("Step number must be non-negative")
+        return v
+
+
+class Trajectory(BaseModel):
+    """
+  POLICY RUN SCHEMAS (Top-Level Container)
+# ============================================================================
+
+
+class PolicyRunBase(BaseModel):
+    """
+    Base schema for a policy stress-test run.
+    
+    A run is the top-level container for a complete stress-testing lifecycle:
+    1. Create run → 2. Load hypotheses → 3. Build graph → 
+    4. Initialize beliefs → 5. Ingest signals → 6. Update beliefs → 
+    7. Run simulation → 8. Analyze results
+    
+    Each run is tied to a specific policy rule being stress-tested.
+    """
+
+    policy_rule: str = Field(
+        ...,
+        min_length=10,
+        description="The specific policy rule being stress-tested (should be concrete and actionable)",
+        examples=[
+            "Mandatory Aadhaar-based biometric authentication at Fair Price Shops for PDS entitlements"
+        ],
+    )
+    
+    domain: str = Field(
+        default="PDS",
+        description="Policy domain or sector (enables domain-specific analysis)",
+        examples=["PDS", "Healthcare", "Education", "Employment"],
+    )
+    
+    description: Optional[str] = Field(
+        None,
+        description="Human-readable context, background, or purpose of this stress-test run",
+        examples=["V1 stress test for PDS biometric authentication rollout in Maharashtra"],
+    )
+    
+    metadata: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Run-specific metadata (extensible for custom fields)",
+        examples=[{"created_by": "policy_team", "region": "Maharashtra", "version": "v1"}],
+    )
+
+    @field_validator("policy_rule")
+    @classmethod
+    def validate_policy_rule_length(cls, v: str) -> str:
+        """Ensure policy rule has meaningful content."""
+        if len(v.strip()) < 10:
+            raise ValueError("Policy rule must be at least 10 characters")
+        return v.strip()
+
+
+class PolicyRunCreate(PolicyRunBase):
+    """
+    Schema for creating a new policy stress-test run via API.
+    
+    Identical to PolicyRunBase - separated for semantic clarity.
+    """
+
+    model_config = ConfigDict(
+        json_schema_extra={
+  API RESPONSE WRAPPERS (Standard Response Format)
+# ============================================================================
+
+
+class APIResponse(BaseModel):
+    """
+    Standard successful API response wrapper.
+    
+    Provides consistent response structure across all endpoints.
+    Used for operations that don't return domain objects directly.
+    """
+
+    success: bool = Field(default=True, description="Indicates successful operation")
+    
+    message: str = Field(
+        ...,
+        description="Human-readable success message",
+        examples=["Run deleted successfully", "Beliefs initialized"],
+    )
+    
+    data: Optional[Any] = Field(
+        None,
+        description="Optional additional response data",
+    )
+    
+    timestamp: datetime = Field(
+        default_factory=datetime.utcnow,
+        description="Response generation timestamp",
+    )
+
+
+class ErrorResponse(BaseModel):
+    """
+    Standard error response wrapper.
+    
+    Provides consistent error structure across all endpoints.
+    Used by FastAPI exception handlers.
+    """
+
+    success: bool = Field(
+        default=False,
+        description="Indicates failed operation",
+    )
+    
+    error: str = Field(
+        ...,
+        description="High-level error category or message",
+        examples=["Not Found", "Validation Error", "Database Error"],
+    )
+    
+    detail: Optional[str] = Field(
+        None,
+        description="Detailed error explanation (may include technical information)",
+        examples=["Run with ID abc-123 not found", "HID must follow format H###"],
+    )
+    
+    timestamp: datetime = Field(
+        default_factory=datetime.utcnow,
+        description="Error occurrence timestamp",
+    
+    status: RunStatus = Field(
+        ...,
+        description="Current lifecycle status of this run",
+    )
+    
+    created_at: datetime = Field(..., description="Timestamp when run was created")
+    updated_at: datetime = Field(..., description="Timestamp when run was last modified")
+    
+    hypothesis_count: int = Field(
+        default=0,
+        ge=0,
+        description="Number of hypotheses loaded into this run",
+    )
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class PolicyRunSummary(BaseModel):
+    """
+    High-level summary of a policy run (for list views).
+    
+    Lightweight schema containing key information without full details.
+    Used for listing multiple runs efficiently.
+    """
+
+    id: UUID = Field(..., description="Run unique identifier")
+    
+    policy_rule: str = Field(..., description="Policy rule being tested")
+    
+    status: RunStatus = Field(..., description="Current status")
+    
+    hypothesis_count: int = Field(..., description="Number of hypotheses in run")
+    
+    created_at: datetime = Field(..., description="Creation timestamp")
+    
+    latest_belief_state_timestamp: Optional[datetime] = Field(
+        None,
+        description="Timestamp of most recent belief state (if any)",
+    )
+    
+    simulation_count: int = Field(
+        default=0,
+        ge=0,
+        description="Number of simulations executed for this run",
+    )
+
+
+# Backward compatibility aliases (maintaining consistency with existing code)
+RunBase = PolicyRunBase
+RunCreate = PolicyRunCreate
+Run = PolicyRun
+RunSummary = PolicyRunSummary
+
+class SimulationResult(BaseModel):
+    """
+    Complete results from a Monte Carlo simulation run.
+    
+    Contains:
+    - All simulated trajectories (typically 1000+)
+    - Summary statistics across trajectories
+    - Sensitivity hotspots (high-variance hypotheses)
+    - Simulation parameters (for reproducibility)
+    
+    This is the primary output artifact enabling:
+    - Distribution analysis over possible futures
+    - Identification of common pathways
+    - Detection of sensitivity hotspots requiring policy attention
+    - Uncertainty quantification
+    
+    CRITICAL: This is NOT a single prediction. It's a distribution over
+    multiple plausible futures, explicitly maintaining uncertainty.
+    """
+
+    run_id: UUID = Field(..., description="Foreign key to parent run")
+    
+    simulation_id: UUID = Field(
+        ...,
+        description="System-generated unique identifier for this simulation execution",
+    )
+    
+    trajectories: List[Trajectory] = Field(
+        ...,
+        min_length=1,
+        description="All simulated trajectories (typically 1000+)",
+    )
+    
+    summary_statistics: Dict[str, Any] = Field(
+        ...,
+        description="Aggregate metrics: success rate, avg length, frequent activations, etc.",
+        examples=[
+            {
+                "success_rate": 0.85,
+                "failure_rate": 0.15,
+                "total_trajectories": 1000,
+                "avg_trajectory_length": 6.3,
+                "most_frequent_activations": [{"hid": "H001", "frequency": 0.72}],
+            }
+        ],
+    )
+    
+    sensitivity_hotspots: List[str] = Field(
+        ...,
+        description="HIDs of hypotheses with high variance/influence across trajectories (require attention)",
+        examples=[["H001", "H009", "H014"]],
+    )
+    
+    timestamp: datetime = Field(
+        ...,
+        description="Timestamp when simulation was executed",
+    )
+    
+    parameters: Dict[str, Any] = Field(
+        ...,
+        description="Simulation parameters used (for reproducibility and audit)",
+        examples=[
+            {
+                "n_trajectories": 1000,
+                "max_steps": 10,
+                "activation_threshold": 0.5,
+                "propagation_strength": 0.3,
+                "random_seed": 42,
+            }
+        ],
+    )
+
+    @field_validator("trajectories")
+    @classmethod
+    def validate_trajectories_not_empty(cls, v: List[Trajectory]) -> List[Trajectory]:
+        """Ensure at least one trajectory was generated."""
+        if not v:
+            raise ValueError("Simulation must generate at least one trajectory")
+        return vef validate_min_length(cls, v: str) -> str:
+        """Ensure meaningful content."""
+        if len(v.strip()) < 3:
+            raise ValueError("Field must have meaningful content")
+        return v.strip()
+
+
+class SignalCreate(SignalBase):
+    """
+    Schema for creating a new signal via API.
+    
+    Identical to SignalBase - separated for semantic clarity.
+    """
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "signal_type": "grievance",
+                "content": "Elderly beneficiaries report authentication failures",
+                "source": "District Administration Office",
+                "date_observed": "2026-01-15T10:00:00Z",
+                "affected_hids": ["H001", "H009"],
+                "strength": 0.7,
+                "metadata": {"district": "Pune", "count": 142},
+            }
+        }
+    )
+
+
+class Signal(SignalBase):
+    """
+    Full signal schema with system-managed metadata.
+    
+    Used when returning signals from database or API.
+    """
+
+    id: UUID = Field(..., description="System-generated unique identifier")
+    run_id: UUID = Field(..., description="Foreign key to parent run")
+    created_at: datetime = Field(..., description="Timestamp when signal was recorded in system")
+
+    model_config = ConfigDict(from_attributes=True)gorithm identifier (extensibility point for future methods)",
+        examples=["bayesian_simple", "bayesian_with_priors"],
+    )
+    
+    notes: Optional[str] = Field(
+        None,
+        description="Optional context or reasoning for this update (logged in explanation_log)",
+        examples=["Incorporating field evidence from past 30 days"],
+    )
+
+    @field_validator("signal_ids")
+    @classmethod
+    def validate_signal_ids_not_empty(cls, v: List[UUID]) -> List[UUID]:
+        """Ensure at least one signal is provided."""
+        if not v:
+            raise ValueError("Must provide at least one signal_id for belief update")
+        return v
+    - Node list (all hypothesis HIDs in the graph)
+    - Edge list (all relationships between hypotheses)
+    - Metadata (computed graph properties: centrality, density, components, etc.)
+    
+    The graph is the primary structural artifact enabling:
+    - Belief constraint propagation
+    - Cascade simulation
+    - Sensitivity analysis
+    """
+
+    run_id: UUID = Field(..., description="Foreign key to parent run")
+    
+    nodes: List[str] = Field(
+        ...,
+        min_length=1,
+        description="List of all hypothesis HIDs in the graph",
+        examples=[["H001", "H002", "H003"]],
+    )
+    
+    edges: List[Edge] = Field(
+        ...,
+        description="List of all directed edges (relationships) in the graph",
+    )
+    
+    metadata: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Computed graph properties: centrality scores, density, connected components, etc.",
+        examples=[
+            {
+                "node_count": 20,
+                "edge_count": 30,
+                "density": 0.15,
+                "centrality": {"H001": 0.15, "H002": 0.12},
+                "components": [["H001", "H002"], ["H003"]],
+            }
+        ],
+    )
+    
+    created_at: datetime = Field(..., description="Timestamp when graph was constructed")
+
+    @field_validator("nodes")
+    @classmethod
+    def validate_node_hids(cls, v: List[str]) -> List[str]:
+        """Ensure all nodes follow HID format."""
+        for hid in v:
+            if not hid.startswith("H") or not hid[1:].isdigit():
+                raise ValueError(f"Invalid node HID: {hid}")
+        return vsm_length(cls, v: str) -> str:
+        """Ensure mechanism has meaningful content."""
+        if len(v.strip()) < 10:
+            raise ValueError("Mechanism must be at least 10 characters")
+        return v.strip()
+
+
+class HypothesisCreate(HypothesisBase):
+    """
+    Schema for creating a new hypothesis via API.
+    
+    Identical to HypothesisBase - separated for semantic clarity and future extensibility.
+    """
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "hid": "H001",
+                "stakeholders": ["Elderly beneficiaries"],
+                "triggers": ["Biometric authentication mandate"],
+                "mechanism": "Elderly with worn fingerprints face authentication failures",
+                "primary_effects": ["Increased failure rates", "Ration denial"],
+                "secondary_effects": ["Nutrition deprivation"],
+                "time_horizon": "immediate",
+                "confidence_notes": "Documented in multiple field reports",
+            }
+        }
+    )
+
+
+class Hypothesis(HypothesisBase):
+    """
+    Full hypothesis schema with system-managed metadata.
+    
+    Used when returning hypotheses from the database or API.
+    Includes UUID and timestamp tracking.
+    """
+
+    id: UUID = Field(..., description="System-generated unique identifier")
+    run_id: UUID = Field(..., description="Foreign key to parent run")
+    created_at: datetime = Field(..., description="Timestamp when hypothesis was created")
+
+    model_config = ConfigDict(from_attributes=True)================================================
+# HYPOTHESIS SCHEMAS
+# ============================================================================
+
+
+class HypothesisBase(BaseModel):
+    """Core hypothesis fields - mechanistic adaptation claim."""
+
+    hid: str = Field(..., description="Unique hypothesis identifier (e.g., 'H001')")
+    stakeholders: List[str] = Field(..., description="Affected stakeholder groups")
+    triggers: List[str] = Field(..., description="Policy changes or conditions that activate this")
+    mechanism: str = Field(..., description="Causal mechanism of adaptation")
+    primary_effects: List[str] = Field(..., description="Direct consequences")
+    secondary_effects: List[str] = Field(
+        default_factory=list, description="Indirect/cascading consequences"
+    )
+    time_horizon: TimeHorizon = Field(..., description="Expected timeframe for manifestation")
+    confidence_notes: Optional[str] = Field(
+        None, description="Contextual notes on uncertainty"
+    )
+
+    @field_validator("hid")
+    @classmethod
+    def validate_hid_format(cls, v: str) -> str:
+        """Ensure HID follows naming convention."""
+        if not v.startswith("H") or not v[1:].isdigit():
+            raise ValueError("HID must be format H### (e.g., H001, H042)")
+        return v
+
+    @field_validator("stakeholders", "triggers", "primary_effects")
+    @classmethod
+    def validate_non_empty_lists(cls, v: List[str]) -> List[str]:
+        """Ensure critical lists are not empty."""
+        if not v:
+            raise ValueError("This field cannot be empty")
+        return v
+
+
+class HypothesisCreate(HypothesisBase):
+    """Schema for creating a new hypothesis."""
+
+    pass
+
+
+class Hypothesis(HypothesisBase):
+    """Full hypothesis with system metadata."""
+
+    id: UUID
+    run_id: UUID
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+# ============================================================================
+# GRAPH SCHEMAS
+# ============================================================================
+
+
+class GraphEdge(BaseModel):
+    """Directed edge in the hypothesis graph."""
+
+    source_hid: str = Field(..., description="Source hypothesis HID")
+    target_hid: str = Field(..., description="Target hypothesis HID")
+    edge_type: EdgeType = Field(..., description="Type of relationship")
+    strength: Optional[float] = Field(
+        None, ge=0.0, le=1.0, description="Optional strength of relationship"
+    )
+    notes: Optional[str] = Field(None, description="Explanation of relationship")
+
+
+class GraphEdgeCreate(GraphEdge):
+    """Schema for creating a graph edge."""
+
+    pass
+
+
+class HypothesisGraph(BaseModel):
+    """Complete hypothesis graph artifact."""
+
+    run_id: UUID
+    nodes: List[str] = Field(..., description="List of hypothesis HIDs")
+    edges: List[GraphEdge] = Field(..., description="Relationships between hypotheses")
+    metadata: Dict[str, Any] = Field(
+        default_factory=dict, description="Graph-level metadata (cycles, clusters, etc.)"
+    )
+    created_at: datetime
+
+
+# ============================================================================
+# BELIEF STATE SCHEMAS
+# ============================================================================
+
+
+class BeliefEntry(BaseModel):
+    """Belief about a single hypothesis."""
+
+    hid: str
+    probability: float = Field(..., ge=0.0, le=1.0, description="P(H_i) belief")
+    last_updated: datetime
+    update_count: int = Field(default=0, description="Number of updates applied")
+
+
+class BeliefState(BaseModel):
+    """Complete belief state at a point in time."""
+
+    id: UUID
+    run_id: UUID
+    beliefs: Dict[str, float] = Field(
+        ..., description="Map of HID -> probability"
+    )
+    timestamp: datetime
+    explanation_log: List[str] = Field(
+        default_factory=list, description="Human-readable update explanations"
+    )
+
+    class Config:
+        from_attributes = True
+
+    @field_validator("beliefs")
+    @classmethod
+    def validate_probabilities(cls, v: Dict[str, float]) -> Dict[str, float]:
+        """Ensure all probabilities are in [0, 1]."""
+        for hid, prob in v.items():
+            if not (0.0 <= prob <= 1.0):
+                raise ValueError(f"Probability for {hid} must be in [0, 1], got {prob}")
+        return v
+
+
+class BeliefUpdate(BaseModel):
+    """Request to update belief state based on evidence."""
+
+    signal_ids: List[UUID] = Field(..., description="Signal IDs providing evidence")
+    update_method: str = Field(
+        default="bayesian_simple", description="Update algorithm to use"
+    )
+    notes: Optional[str] = Field(None, description="Context for this update")
+
+
+# ============================================================================
+# SIGNAL SCHEMAS
+# ============================================================================
+
+
+class SignalBase(BaseModel):
+    """Base schema for evidence signals."""
+
+    signal_type: SignalType
+    content: str = Field(..., description="Description or summary of the signal")
+    source: str = Field(..., description="Source of this evidence")
+    date_observed: datetime = Field(..., description="When this signal was observed")
+    affected_hids: List[str] = Field(
+        ..., description="Hypothesis HIDs this signal provides evidence for/against"
+    )
+    strength: float = Field(
+        default=0.5, ge=0.0, le=1.0, description="Strength/reliability of signal"
+    )
+    metadata: Dict[str, Any] = Field(
+        default_factory=dict, description="Additional structured data"
+    )
+
+
+class SignalCreate(SignalBase):
+    """Schema for creating a new signal."""
+
+    pass
+
+
+class Signal(SignalBase):
+    """Full signal with system metadata."""
+
+    id: UUID
+    run_id: UUID
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+# ============================================================================
+# TRAJECTORY SCHEMAS
+# ============================================================================
+
+
+class TrajectoryStep(BaseModel):
+    """A single step in a simulated trajectory."""
+
+    step: int
+    activated_hids: List[str] = Field(..., description="Hypotheses active at this step")
+    cumulative_effects: List[str] = Field(
+        ..., description="Accumulated effects up to this point"
+    )
+    notes: Optional[str] = None
+
+
+class Trajectory(BaseModel):
+    """A single simulated future trajectory."""
+
+    trajectory_id: str = Field(..., description="Unique identifier for this trajectory")
+    run_id: UUID
+    steps: List[TrajectoryStep] = Field(..., description="Sequence of states")
+    final_state: Dict[str, Any] = Field(
+        ..., description="Terminal state characteristics"
+    )
+    probability: float = Field(..., ge=0.0, le=1.0, description="Probability of this path")
+    status: TrajectoryStatus = Field(default=TrajectoryStatus.COMPLETED)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class SimulationResult(BaseModel):
+    """Results from a Monte Carlo simulation run."""
+
+    run_id: UUID
+    simulation_id: UUID
+    trajectories: List[Trajectory] = Field(..., description="All simulated trajectories")
+    summary_statistics: Dict[str, Any] = Field(
+        ..., description="Aggregate metrics across trajectories"
+    )
+    sensitivity_hotspots: List[str] = Field(
+        ..., description="HIDs with high variance or influence"
+    )
+    timestamp: datetime
+    parameters: Dict[str, Any] = Field(
+        ..., description="Simulation parameters used (n_iterations, seed, etc.)"
+    )
+
+
+# ============================================================================
+# RUN SCHEMAS
+# ============================================================================
+
+
+class RunStatus(str, Enum):
+    """Status of a stress-test run."""
+
+    CREATED = "created"
+    HYPOTHESES_LOADED = "hypotheses_loaded"
+    GRAPH_BUILT = "graph_built"
+    BELIEFS_INITIALIZED = "beliefs_initialized"
+    SIMULATING = "simulating"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class RunBase(BaseModel):
+    """Base schema for a stress-test run."""
+
+    policy_rule: str = Field(
+        ..., description="The policy rule being stress-tested"
+    )
+    domain: str = Field(default="PDS", description="Policy domain")
+    description: Optional[str] = Field(None, description="Human-readable context")
+    metadata: Dict[str, Any] = Field(
+        default_factory=dict, description="Run-specific metadata"
+    )
+
+
+class RunCreate(RunBase):
+    """Schema for creating a new run."""
+
+    pass
+
+
+class Run(RunBase):
+    """Full run with system metadata."""
+
+    id: UUID
+    status: RunStatus
+    created_at: datetime
+    updated_at: datetime
+    hypothesis_count: int = Field(default=0, description="Number of hypotheses in this run")
+
+    class Config:
+        from_attributes = True
+
+
+class RunSummary(BaseModel):
+    """High-level summary of a run."""
+
+    id: UUID
+    policy_rule: str
+    status: RunStatus
+    hypothesis_count: int
+    created_at: datetime
+    latest_belief_state_timestamp: Optional[datetime] = None
+    simulation_count: int = Field(default=0, description="Number of simulations executed")
+
+
+# ============================================================================
+# RESPONSE WRAPPERS
+# ============================================================================
+
+
+class APIResponse(BaseModel):
+    """Standard API response wrapper."""
+
+    success: bool
+    message: str
+    data: Optional[Any] = None
+    timestamp: datetime = Field(default_factory=datetime.utcnow)
+
+
+class ErrorResponse(BaseModel):
+    """Standard error response."""
+
+    success: bool = False
+    error: str
+    detail: Optional[str] = None
+    timestamp: datetime = Field(default_factory=datetime.utcnow)

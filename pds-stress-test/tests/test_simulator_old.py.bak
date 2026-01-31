@@ -1,0 +1,360 @@
+"""
+Tests for Monte Carlo Simulator
+"""
+
+from uuid import uuid4
+
+import pytest
+
+from app.engine import MonteCarloSimulator, SimulationParameters
+from app.schemas import Hypothesis, TimeHorizon
+
+
+@pytest.fixture
+def sample_hypotheses():
+    """Create sample hypotheses for testing."""
+    return [
+        Hypothesis(
+            id=uuid4(),
+            run_id=uuid4(),
+            hid="H001",
+            stakeholders=["Group A"],
+            triggers=["Trigger 1"],
+            mechanism="Mechanism 1",
+            primary_effects=["Effect A1", "Effect A2"],
+            secondary_effects=["Secondary A1"],
+            time_horizon=TimeHorizon.IMMEDIATE,
+            created_at="2026-01-31T00:00:00",
+        ),
+        Hypothesis(
+            id=uuid4(),
+            run_id=uuid4(),
+            hid="H002",
+            stakeholders=["Group B"],
+            triggers=["Trigger 2"],
+            mechanism="Mechanism 2",
+            primary_effects=["Effect B1"],
+            secondary_effects=[],
+            time_horizon=TimeHorizon.SHORT_TERM,
+            created_at="2026-01-31T00:00:00",
+        ),
+        Hypothesis(
+            id=uuid4(),
+            run_id=uuid4(),
+            hid="H003",
+            stakeholders=["Group C"],
+            triggers=["Trigger 3"],
+            mechanism="Mechanism 3",
+            primary_effects=["Effect C1"],
+            secondary_effects=["Secondary C1", "Secondary C2"],
+            time_horizon=TimeHorizon.MEDIUM_TERM,
+            created_at="2026-01-31T00:00:00",
+        ),
+    ]
+
+
+@pytest.fixture
+def sample_beliefs():
+    """Create sample belief state."""
+    return {
+        "H001": 0.7,
+        "H002": 0.5,
+        "H003": 0.3,
+    }
+
+
+@pytest.fixture
+def sample_edges():
+    """Create sample graph edges."""
+    return [
+        {
+            "source_hid": "H001",
+            "target_hid": "H002",
+            "edge_type": "reinforces",
+            "strength": 0.6,
+        },
+        {
+            "source_hid": "H002",
+            "target_hid": "H003",
+            "edge_type": "reinforces",
+            "strength": 0.5,
+        },
+    ]
+
+
+def test_simulator_initialization(sample_hypotheses, sample_beliefs, sample_edges):
+    """Test simulator initialization."""
+    params = SimulationParameters(
+        n_trajectories=10,
+        max_steps=5,
+        random_seed=42,
+    )
+    
+    simulator = MonteCarloSimulator(
+        hypotheses=sample_hypotheses,
+        beliefs=sample_beliefs,
+        graph_edges=sample_edges,
+        parameters=params,
+    )
+    
+    assert len(simulator.hypotheses) == 3
+    assert len(simulator.beliefs) == 3
+    assert len(simulator.graph_edges) == 2
+
+
+def test_simulate_single_trajectory(sample_hypotheses, sample_beliefs, sample_edges):
+    """Test simulating a single trajectory."""
+    params = SimulationParameters(
+        n_trajectories=1,
+        max_steps=5,
+        random_seed=42,
+    )
+    
+    simulator = MonteCarloSimulator(
+        hypotheses=sample_hypotheses,
+        beliefs=sample_beliefs,
+        graph_edges=sample_edges,
+        parameters=params,
+    )
+    
+    trajectory = simulator.simulate_single_trajectory("T0001")
+    
+    assert trajectory["trajectory_id"] == "T0001"
+    assert "steps" in trajectory
+    assert "final_state" in trajectory
+    assert "status" in trajectory
+    assert "metadata" in trajectory
+
+
+def test_run_simulation(sample_hypotheses, sample_beliefs, sample_edges):
+    """Test running full Monte Carlo simulation."""
+    run_id = uuid4()
+    
+    params = SimulationParameters(
+        n_trajectories=100,
+        max_steps=5,
+        random_seed=42,
+    )
+    
+    simulator = MonteCarloSimulator(
+        hypotheses=sample_hypotheses,
+        beliefs=sample_beliefs,
+        graph_edges=sample_edges,
+        parameters=params,
+    )
+    
+    result = simulator.run_simulation(run_id)
+    
+    assert "run_id" in result
+    assert "simulation_id" in result
+    assert "trajectories" in result
+    assert "summary_statistics" in result
+    assert "sensitivity_hotspots" in result
+    assert "parameters" in result
+    
+    assert len(result["trajectories"]) == 100
+
+
+def test_simulation_summary_statistics(sample_hypotheses, sample_beliefs, sample_edges):
+    """Test that summary statistics are computed correctly."""
+    run_id = uuid4()
+    
+    params = SimulationParameters(
+        n_trajectories=50,
+        max_steps=5,
+        random_seed=42,
+    )
+    
+    simulator = MonteCarloSimulator(
+        hypotheses=sample_hypotheses,
+        beliefs=sample_beliefs,
+        graph_edges=sample_edges,
+        parameters=params,
+    )
+    
+    result = simulator.run_simulation(run_id)
+    stats = result["summary_statistics"]
+    
+    assert "success_rate" in stats
+    assert "failure_rate" in stats
+    assert "total_trajectories" in stats
+    assert "completed_trajectories" in stats
+    
+    # Success rate + failure rate should equal 1
+    assert abs(stats["success_rate"] + stats["failure_rate"] - 1.0) < 0.01
+
+
+def test_simulation_reproducibility(sample_hypotheses, sample_beliefs, sample_edges):
+    """Test that simulations are reproducible with same seed."""
+    run_id = uuid4()
+    
+    params1 = SimulationParameters(
+        n_trajectories=20,
+        max_steps=5,
+        random_seed=42,
+    )
+    
+    params2 = SimulationParameters(
+        n_trajectories=20,
+        max_steps=5,
+        random_seed=42,
+    )
+    
+    simulator1 = MonteCarloSimulator(
+        hypotheses=sample_hypotheses,
+        beliefs=sample_beliefs,
+        graph_edges=sample_edges,
+        parameters=params1,
+    )
+    
+    simulator2 = MonteCarloSimulator(
+        hypotheses=sample_hypotheses,
+        beliefs=sample_beliefs,
+        graph_edges=sample_edges,
+        parameters=params2,
+    )
+    
+    result1 = simulator1.run_simulation(run_id)
+    result2 = simulator2.run_simulation(run_id)
+    
+    # With same seed, summary statistics should be identical
+    assert result1["summary_statistics"]["total_trajectories"] == result2["summary_statistics"]["total_trajectories"]
+    
+    # First trajectory should be identical
+    traj1 = result1["trajectories"][0]
+    traj2 = result2["trajectories"][0]
+    
+    assert len(traj1["steps"]) == len(traj2["steps"])
+
+
+def test_sensitivity_hotspots(sample_hypotheses, sample_beliefs, sample_edges):
+    """Test that sensitivity hotspots are identified."""
+    run_id = uuid4()
+    
+    params = SimulationParameters(
+        n_trajectories=100,
+        max_steps=5,
+        random_seed=42,
+    )
+    
+    simulator = MonteCarloSimulator(
+        hypotheses=sample_hypotheses,
+        beliefs=sample_beliefs,
+        graph_edges=sample_edges,
+        parameters=params,
+    )
+    
+    result = simulator.run_simulation(run_id)
+    hotspots = result["sensitivity_hotspots"]
+    
+    assert isinstance(hotspots, list)
+    # Should identify at least some hotspots
+    # (may be empty if variance is very low)
+
+
+def test_high_belief_more_activations(sample_hypotheses, sample_edges):
+    """Test that higher belief leads to more activations."""
+    run_id = uuid4()
+    
+    # High belief scenario
+    high_beliefs = {"H001": 0.9, "H002": 0.9, "H003": 0.9}
+    
+    # Low belief scenario
+    low_beliefs = {"H001": 0.1, "H002": 0.1, "H003": 0.1}
+    
+    params = SimulationParameters(
+        n_trajectories=50,
+        max_steps=3,
+        random_seed=42,
+    )
+    
+    sim_high = MonteCarloSimulator(
+        hypotheses=sample_hypotheses,
+        beliefs=high_beliefs,
+        graph_edges=sample_edges,
+        parameters=params,
+    )
+    
+    sim_low = MonteCarloSimulator(
+        hypotheses=sample_hypotheses,
+        beliefs=low_beliefs,
+        graph_edges=sample_edges,
+        parameters=params,
+    )
+    
+    result_high = sim_high.run_simulation(run_id)
+    result_low = sim_low.run_simulation(run_id)
+    
+    # High belief should lead to more successful trajectories
+    success_high = result_high["summary_statistics"]["success_rate"]
+    success_low = result_low["summary_statistics"]["success_rate"]
+    
+    assert success_high > success_low
+
+
+def test_time_horizon_affects_activation(sample_hypotheses, sample_beliefs, sample_edges):
+    """Test that time horizon affects activation probability."""
+    # This is implicit in the simulation - immediate hypotheses
+    # should activate more frequently than long-term ones
+    
+    # Create hypotheses with different time horizons but same belief
+    hypotheses_varied = [
+        Hypothesis(
+            id=uuid4(),
+            run_id=uuid4(),
+            hid="H100",
+            stakeholders=["Group"],
+            triggers=["Trigger"],
+            mechanism="Mechanism",
+            primary_effects=["Effect"],
+            secondary_effects=[],
+            time_horizon=TimeHorizon.IMMEDIATE,
+            created_at="2026-01-31T00:00:00",
+        ),
+        Hypothesis(
+            id=uuid4(),
+            run_id=uuid4(),
+            hid="H200",
+            stakeholders=["Group"],
+            triggers=["Trigger"],
+            mechanism="Mechanism",
+            primary_effects=["Effect"],
+            secondary_effects=[],
+            time_horizon=TimeHorizon.LONG_TERM,
+            created_at="2026-01-31T00:00:00",
+        ),
+    ]
+    
+    beliefs_equal = {
+        "H100": 0.5,
+        "H200": 0.5,
+    }
+    
+    params = SimulationParameters(
+        n_trajectories=100,
+        max_steps=3,
+        random_seed=42,
+    )
+    
+    simulator = MonteCarloSimulator(
+        hypotheses=hypotheses_varied,
+        beliefs=beliefs_equal,
+        graph_edges=[],
+        parameters=params,
+    )
+    
+    result = simulator.run_simulation(uuid4())
+    
+    # Count activations
+    immediate_count = 0
+    long_term_count = 0
+    
+    for traj in result["trajectories"]:
+        for step in traj["steps"]:
+            if "H100" in step["activated_hids"]:
+                immediate_count += 1
+            if "H200" in step["activated_hids"]:
+                long_term_count += 1
+    
+    # Immediate should be activated more frequently
+    assert immediate_count > long_term_count

@@ -1,0 +1,389 @@
+{
+  "policy_rule": "Mandatory Aadhaar-based biometric authentication at Fair Price Shops (FPS) for PDS entitlements",
+  "domain": "PDS",
+  "description": "V1 seed data for PDS biometric authentication policy stress-testing",
+  "hypotheses": [
+    {
+      "hid": "H001",
+      "stakeholders": ["Elderly beneficiaries", "PDS administrators"],
+      "triggers": ["Biometric authentication mandate", "Age-related fingerprint degradation"],
+      "mechanism": "Elderly beneficiaries with worn fingerprints face repeated authentication failures, leading to entitlement denial",
+      "primary_effects": [
+        "Increased authentication failure rates for elderly",
+        "Denial of food rations to legitimate beneficiaries",
+        "Increased grievances at FPS"
+      ],
+      "secondary_effects": [
+        "Elderly relying on family members for authentication",
+        "Nutrition deprivation in vulnerable households",
+        "Loss of trust in PDS system"
+      ],
+      "time_horizon": "immediate",
+      "confidence_notes": "Well-documented in field reports across multiple states"
+    },
+    {
+      "hid": "H002",
+      "stakeholders": ["Manual laborers", "Agricultural workers"],
+      "triggers": ["Biometric authentication mandate", "Physical labor causing fingerprint wear"],
+      "mechanism": "Manual laborers have worn/damaged fingerprints from physical work, causing authentication failures",
+      "primary_effects": [
+        "High authentication failure rates among working poor",
+        "Time wasted in repeated authentication attempts",
+        "Lost wages due to time spent at FPS"
+      ],
+      "secondary_effects": [
+        "Workers avoiding PDS due to authentication hassles",
+        "Increased food insecurity despite entitlements",
+        "FPS dealers facing longer queues and complaints"
+      ],
+      "time_horizon": "immediate",
+      "confidence_notes": "Confirmed by multiple audits in rural areas"
+    },
+    {
+      "hid": "H003",
+      "stakeholders": ["FPS dealers", "PDS administrators"],
+      "triggers": ["Biometric device deployment", "Network connectivity requirements"],
+      "mechanism": "Unreliable network connectivity in rural areas prevents biometric authentication, blocking transactions",
+      "primary_effects": [
+        "Transaction failures due to network issues",
+        "FPS dealers unable to dispense rations",
+        "Beneficiaries making multiple trips"
+      ],
+      "secondary_effects": [
+        "FPS dealers using workarounds or manual overrides",
+        "Data inconsistencies in PDS records",
+        "Reduced faith in technology-based governance"
+      ],
+      "time_horizon": "immediate",
+      "confidence_notes": "Persistent issue in regions with poor telecom infrastructure"
+    },
+    {
+      "hid": "H004",
+      "stakeholders": ["FPS dealers", "Corrupt intermediaries"],
+      "triggers": ["Authentication failures", "Dealer discretion in exception handling"],
+      "mechanism": "FPS dealers exploit authentication failures to demand bribes from desperate beneficiaries",
+      "primary_effects": [
+        "Extortion of beneficiaries",
+        "Increased out-of-pocket costs for entitled rations",
+        "Selective denial of rations"
+      ],
+      "secondary_effects": [
+        "Erosion of policy intent (universal access)",
+        "Beneficiaries bypassing PDS for market purchases",
+        "Increased inequality in food access"
+      ],
+      "time_horizon": "short_term",
+      "confidence_notes": "Documented in grievance records and media reports"
+    },
+    {
+      "hid": "H005",
+      "stakeholders": ["Women beneficiaries", "Household heads"],
+      "triggers": ["Biometric authentication mandate", "Patriarchal household structures"],
+      "mechanism": "Women unable to collect rations when household head is away due to authentication tied to male Aadhaar",
+      "primary_effects": [
+        "Reduced flexibility in ration collection timing",
+        "Women dependent on male household members",
+        "Increased household tension over ration access"
+      ],
+      "secondary_effects": [
+        "Reinforcement of gender hierarchies",
+        "Women's autonomy reduced in household food management",
+        "Delayed ration collection affecting meal planning"
+      ],
+      "time_horizon": "short_term",
+      "confidence_notes": "Observed in field studies on gender and technology"
+    },
+    {
+      "hid": "H006",
+      "stakeholders": ["Migrant workers", "Urban poor"],
+      "triggers": ["Biometric authentication mandate", "Mobility requirements"],
+      "mechanism": "Migrant workers cannot access PDS at destination due to fixed FPS location linked to Aadhaar address",
+      "primary_effects": [
+        "Loss of PDS access during migration periods",
+        "Increased food insecurity among migrants",
+        "Higher living costs in destination cities"
+      ],
+      "secondary_effects": [
+        "Migrants avoiding seasonal migration due to PDS concerns",
+        "Economic inefficiency in labor markets",
+        "Increased urban slum populations"
+      ],
+      "time_horizon": "short_term",
+      "confidence_notes": "Major concern highlighted in migrant worker surveys"
+    },
+    {
+      "hid": "H007",
+      "stakeholders": ["PDS administrators", "IT vendors"],
+      "triggers": ["Biometric system deployment", "Device procurement"],
+      "mechanism": "IT vendors capture rent through overpriced biometric devices and maintenance contracts",
+      "primary_effects": [
+        "Inflated procurement costs",
+        "Budget diversion from food subsidies to IT infrastructure",
+        "Vendor lock-in for maintenance"
+      ],
+      "secondary_effects": [
+        "Reduced fiscal space for PDS expansion",
+        "Delayed replacement of faulty devices",
+        "Quality compromises in device specifications"
+      ],
+      "time_horizon": "medium_term",
+      "confidence_notes": "Pattern observed in e-governance projects across sectors"
+    },
+    {
+      "hid": "H008",
+      "stakeholders": ["State governments", "Central government"],
+      "triggers": ["Authentication failures", "Beneficiary exclusion"],
+      "mechanism": "States use authentication data to justify reducing PDS coverage and budgets",
+      "primary_effects": [
+        "Beneficiary lists pruned based on non-usage",
+        "Budget cuts to PDS programs",
+        "Shift from universal to targeted approach"
+      ],
+      "secondary_effects": [
+        "Increased food insecurity among excluded households",
+        "Political backlash in affected constituencies",
+        "Litigation challenging exclusion methodology"
+      ],
+      "time_horizon": "medium_term",
+      "confidence_notes": "Documented in administrative circulars in some states"
+    },
+    {
+      "hid": "H009",
+      "stakeholders": ["Civil society", "Media", "Judiciary"],
+      "triggers": ["Beneficiary exclusion", "Media coverage"],
+      "mechanism": "High-profile cases of starvation deaths linked to authentication failures trigger public outcry and litigation",
+      "primary_effects": [
+        "Media scrutiny of PDS biometric policy",
+        "PIL filed in high courts",
+        "Administrative reviews ordered"
+      ],
+      "secondary_effects": [
+        "Policy rollback or relaxation in some jurisdictions",
+        "Creation of fallback mechanisms (manual authentication)",
+        "Political pressure on implementing agencies"
+      ],
+      "time_horizon": "short_term",
+      "confidence_notes": "Historical pattern from similar technology-mandated exclusions"
+    },
+    {
+      "hid": "H010",
+      "stakeholders": ["FPS dealers", "Beneficiaries"],
+      "triggers": ["Authentication failures", "Dealer workarounds"],
+      "mechanism": "FPS dealers develop informal workarounds (proxy authentication, manual overrides) to maintain operations",
+      "primary_effects": [
+        "Shadow systems parallel to official biometric authentication",
+        "Data integrity compromised",
+        "Variable implementation across FPS"
+      ],
+      "secondary_effects": [
+        "Audit findings showing data-ground mismatch",
+        "Loss of policy traceability and accountability",
+        "Informal norms replacing formal rules"
+      ],
+      "time_horizon": "short_term",
+      "confidence_notes": "Common adaptation in street-level bureaucracy literature"
+    },
+    {
+      "hid": "H011",
+      "stakeholders": ["Children", "Orphans", "Institutional care residents"],
+      "triggers": ["Biometric authentication mandate", "Aadhaar enrollment gaps"],
+      "mechanism": "Children in institutional care without proper Aadhaar enrollment face ration denial",
+      "primary_effects": [
+        "Nutrition deprivation in orphanages and care homes",
+        "Administrative burden on caregivers for enrollment",
+        "Delayed access to entitled rations"
+      ],
+      "secondary_effects": [
+        "Malnutrition in vulnerable child populations",
+        "Institutional care facilities seeking alternative food sources",
+        "Budget overruns in institutional care programs"
+      ],
+      "time_horizon": "immediate",
+      "confidence_notes": "Documented in child welfare reports"
+    },
+    {
+      "hid": "H012",
+      "stakeholders": ["Persons with disabilities", "Caregivers"],
+      "triggers": ["Biometric authentication mandate", "Physical accessibility barriers"],
+      "mechanism": "Persons with disabilities unable to provide fingerprints or face accessibility issues at FPS with biometric devices",
+      "primary_effects": [
+        "Exclusion of disabled beneficiaries",
+        "Dependence on caregivers for authentication",
+        "Dignity violations in authentication process"
+      ],
+      "secondary_effects": [
+        "Disability rights litigation",
+        "Demand for alternative authentication modes",
+        "Stigmatization of disabled beneficiaries"
+      ],
+      "time_horizon": "immediate",
+      "confidence_notes": "Raised in disability rights advocacy forums"
+    },
+    {
+      "hid": "H013",
+      "stakeholders": ["PDS administrators", "Central government"],
+      "triggers": ["Biometric data collection", "Database integration"],
+      "mechanism": "Centralized biometric database enables granular tracking of beneficiary behavior and consumption patterns",
+      "primary_effects": [
+        "Real-time monitoring of PDS usage",
+        "Data-driven policy decisions",
+        "Identification of leakages and fraud"
+      ],
+      "secondary_effects": [
+        "Surveillance concerns among beneficiaries",
+        "Privacy erosion in welfare access",
+        "Data misuse for political targeting"
+      ],
+      "time_horizon": "medium_term",
+      "confidence_notes": "Digital governance literature on surveillance"
+    },
+    {
+      "hid": "H014",
+      "stakeholders": ["FPS dealers", "Black market operators"],
+      "triggers": ["Biometric authentication", "Reduced leakage"],
+      "mechanism": "Biometric authentication reduces diversion of PDS grains to black market, affecting dealer side income",
+      "primary_effects": [
+        "Reduced PDS leakage",
+        "FPS dealer income from side-sales drops",
+        "Dealer resistance to biometric enforcement"
+      ],
+      "secondary_effects": [
+        "FPS dealers exiting the system",
+        "Reduced FPS density in rural areas",
+        "Beneficiaries traveling longer distances for rations"
+      ],
+      "time_horizon": "short_term",
+      "confidence_notes": "Economic incentive analysis from PDS reform studies"
+    },
+    {
+      "hid": "H015",
+      "stakeholders": ["PDS administrators", "Auditors"],
+      "triggers": ["Biometric authentication data", "Audit processes"],
+      "mechanism": "Granular transaction data enables sophisticated audits identifying genuine vs. ghost beneficiaries",
+      "primary_effects": [
+        "Improved audit accuracy",
+        "Detection of fraudulent beneficiary entries",
+        "Recovery of diverted funds"
+      ],
+      "secondary_effects": [
+        "Reduction in PDS fiscal burden",
+        "Better targeting of genuine beneficiaries",
+        "Political credit for reducing corruption"
+      ],
+      "time_horizon": "medium_term",
+      "confidence_notes": "Intended policy outcome in biometric authentication design"
+    },
+    {
+      "hid": "H016",
+      "stakeholders": ["Tech-savvy youth", "Urban beneficiaries"],
+      "triggers": ["Biometric authentication", "Digital literacy"],
+      "mechanism": "Tech-savvy beneficiaries adapt quickly to biometric systems, experiencing minimal disruption",
+      "primary_effects": [
+        "Smooth transitions for digitally literate groups",
+        "Positive feedback on biometric efficiency",
+        "Reduced transaction times at FPS"
+      ],
+      "secondary_effects": [
+        "Growing digital divide in PDS access",
+        "Urban-rural disparity in policy experience",
+        "Skewed policy perception based on elite experience"
+      ],
+      "time_horizon": "immediate",
+      "confidence_notes": "Digital divide literature applicable to PDS context"
+    },
+    {
+      "hid": "H017",
+      "stakeholders": ["Private sector", "Fintech companies"],
+      "triggers": ["Biometric infrastructure", "Aadhaar authentication"],
+      "mechanism": "PDS biometric infrastructure becomes template for other welfare programs, attracting private sector interest",
+      "primary_effects": [
+        "Expansion of Aadhaar-based authentication to other schemes",
+        "Private sector involvement in welfare delivery",
+        "Standardization of digital welfare platforms"
+      ],
+      "secondary_effects": [
+        "Commercialization of welfare infrastructure",
+        "Data sharing with private entities",
+        "Lock-in to Aadhaar ecosystem for all benefits"
+      ],
+      "time_horizon": "long_term",
+      "confidence_notes": "Trend analysis from digital India initiatives"
+    },
+    {
+      "hid": "H018",
+      "stakeholders": ["Opposition parties", "Political activists"],
+      "triggers": ["Authentication failures", "Beneficiary grievances"],
+      "mechanism": "Opposition parties mobilize affected beneficiaries to challenge biometric authentication politically",
+      "primary_effects": [
+        "Political protests against biometric policy",
+        "Electoral consequences in affected areas",
+        "Parliamentary questions and debates"
+      ],
+      "secondary_effects": [
+        "Policy modifications or exceptions introduced",
+        "Politicization of PDS implementation",
+        "Regional variation in enforcement stringency"
+      ],
+      "time_horizon": "short_term",
+      "confidence_notes": "Political economy of welfare reform"
+    },
+    {
+      "hid": "H019",
+      "stakeholders": ["Rural populations", "Remote communities"],
+      "triggers": ["Biometric device deployment", "Geographic barriers"],
+      "mechanism": "Remote communities face delayed deployment of biometric devices and poor after-sales support",
+      "primary_effects": [
+        "Uneven policy implementation across geography",
+        "Extended periods of disrupted PDS access",
+        "Devices remaining non-functional for months"
+      ],
+      "secondary_effects": [
+        "Rural-urban disparity in policy impact",
+        "Migration pressures from affected areas",
+        "Local grievances against state capacity"
+      ],
+      "time_horizon": "short_term",
+      "confidence_notes": "Implementation capacity literature"
+    },
+    {
+      "hid": "H020",
+      "stakeholders": ["Aadhaar ecosystem", "UIDAI"],
+      "triggers": ["PDS biometric authentication", "Data validation"],
+      "mechanism": "Large-scale PDS authentication reveals data quality issues in Aadhaar database (mismatches, duplicates)",
+      "primary_effects": [
+        "Discovery of Aadhaar data errors",
+        "Authentication failures due to database issues",
+        "Pressure on UIDAI for data cleaning"
+      ],
+      "secondary_effects": [
+        "System-wide credibility impact on Aadhaar",
+        "Demand for fallback authentication mechanisms",
+        "Legal challenges to Aadhaar reliability"
+      ],
+      "time_horizon": "medium_term",
+      "confidence_notes": "Database quality concerns documented in technical audits"
+    }
+  ],
+  "graph_edges": [
+    {"source_hid": "H001", "target_hid": "H009", "edge_type": "reinforces", "notes": "Elderly authentication failures create high-profile cases for litigation"},
+    {"source_hid": "H002", "target_hid": "H009", "edge_type": "reinforces", "notes": "Laborers' authentication failures add to grievance pool"},
+    {"source_hid": "H003", "target_hid": "H010", "edge_type": "reinforces", "notes": "Network failures push dealers to develop workarounds"},
+    {"source_hid": "H004", "target_hid": "H010", "edge_type": "reinforces", "notes": "Extortion incentivizes dealers to maintain informal systems"},
+    {"source_hid": "H010", "target_hid": "H015", "edge_type": "contradicts", "notes": "Dealer workarounds undermine audit accuracy"},
+    {"source_hid": "H014", "target_hid": "H015", "edge_type": "reinforces", "notes": "Reduced leakage enables better auditing"},
+    {"source_hid": "H007", "target_hid": "H008", "edge_type": "reinforces", "notes": "IT procurement costs create fiscal pressure for coverage reduction"},
+    {"source_hid": "H008", "target_hid": "H018", "edge_type": "reinforces", "notes": "Coverage cuts create political backlash opportunities"},
+    {"source_hid": "H009", "target_hid": "H018", "edge_type": "reinforces", "notes": "Litigation creates political mobilization opportunities"},
+    {"source_hid": "H013", "target_hid": "H015", "edge_type": "reinforces", "notes": "Surveillance enables sophisticated audits"},
+    {"source_hid": "H013", "target_hid": "H017", "edge_type": "reinforces", "notes": "Data infrastructure attracts private sector interest"},
+    {"source_hid": "H016", "target_hid": "H013", "edge_type": "reinforces", "notes": "Tech-savvy adoption normalizes surveillance"},
+    {"source_hid": "H001", "target_hid": "H005", "edge_type": "reinforces", "notes": "Elderly failures shift burden to other household members"},
+    {"source_hid": "H006", "target_hid": "H008", "edge_type": "reinforces", "notes": "Migrant non-usage used to justify coverage reduction"},
+    {"source_hid": "H011", "target_hid": "H009", "edge_type": "reinforces", "notes": "Child deprivation cases trigger litigation"},
+    {"source_hid": "H012", "target_hid": "H009", "edge_type": "reinforces", "notes": "Disability exclusion triggers rights-based litigation"},
+    {"source_hid": "H003", "target_hid": "H019", "edge_type": "reinforces", "notes": "Connectivity issues compound with deployment delays"},
+    {"source_hid": "H014", "target_hid": "H004", "edge_type": "reinforces", "notes": "Income loss incentivizes dealers to seek bribes"},
+    {"source_hid": "H020", "target_hid": "H003", "edge_type": "reinforces", "notes": "Database errors cause authentication failures similar to network issues"},
+    {"source_hid": "H015", "target_hid": "H008", "edge_type": "reinforces", "notes": "Audit findings support coverage reduction decisions"}
+  ]
+}
