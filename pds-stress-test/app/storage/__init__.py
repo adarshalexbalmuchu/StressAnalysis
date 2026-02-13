@@ -2,7 +2,7 @@
 
 from app.storage import repo
 from app.storage.database import Base, SessionLocal, engine, get_db
-from app.storage.models_v2 import (
+from app.storage.models import (
     BeliefState,
     HypothesisGraph,
     HypothesisSet,

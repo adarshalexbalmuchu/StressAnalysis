@@ -20,6 +20,12 @@ class Settings(BaseSettings):
     env: str = "development"
     log_level: str = "INFO"
     
+    # GenAI — Google Gemini (free tier: 15 RPM, 1M tokens/day)
+    gemini_api_key: str = ""
+    gemini_model: str = "gemini-2.0-flash"
+    gemini_temperature: float = 0.7
+    gemini_max_tokens: int = 8192
+
     # CORS (if needed for future UI)
     cors_origins: list[str] = ["http://localhost:3000", "http://localhost:8000"]
 

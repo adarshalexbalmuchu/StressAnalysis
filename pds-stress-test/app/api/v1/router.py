@@ -1,8 +1,11 @@
 """
-FastAPI routes for stress-test pipeline execution.
+FastAPI routes for the PDS Stress-Test API (V1).
 
-Thin routing layer that orchestrates engine calls and persists results.
-Executes V1 workflow: hypotheses → graph → signals → beliefs → simulation.
+Consolidated router handling:
+- Run management (CRUD)
+- Pipeline execution (hypotheses → graph → signals → beliefs → simulation)
+
+Thin routing layer: validation → engine/repository → response.
 """
 
 from datetime import datetime, timezone
@@ -32,12 +35,35 @@ def norm_uuid(x) -> UUID:
     return UUID(str(x))
 
 
-router = APIRouter(prefix="/runs/{run_id}", tags=["pipeline"])
-
-
 # ============================================================================
 # REQUEST/RESPONSE SCHEMAS
 # ============================================================================
+
+
+class CreateRunRequest(BaseModel):
+    """Request to create a new stress-test run."""
+
+    name: str = Field(..., description="Human-readable run name")
+    policy_rule_text: str = Field(..., description="Policy rule being stress-tested")
+
+
+class RunResponse(BaseModel):
+    """Response with run details."""
+
+    id: UUID
+    name: str
+    policy_rule_text: str
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class RunListResponse(BaseModel):
+    """Response with list of runs."""
+
+    runs: list[RunResponse]
+    total: int
 
 
 class HypothesesRequest(BaseModel):
@@ -158,45 +184,175 @@ class SimulateResponse(BaseModel):
 
 
 # ============================================================================
+# ROUTERS
+# ============================================================================
+
+runs_router = APIRouter(prefix="/runs", tags=["runs"])
+pipeline_router = APIRouter(prefix="/runs/{run_id}", tags=["pipeline"])
+
+
+# ============================================================================
+# RUN MANAGEMENT ENDPOINTS
+# ============================================================================
+
+
+@runs_router.post("/", response_model=RunResponse, status_code=201)
+def create_run(
+    request: CreateRunRequest,
+    db: Session = Depends(get_db),
+) -> RunResponse:
+    """Create a new policy stress-test run."""
+    run = repo.create_run(
+        db=db,
+        name=request.name,
+        policy_rule_text=request.policy_rule_text,
+    )
+    return RunResponse(
+        id=norm_uuid(run.id),
+        name=run.name,
+        policy_rule_text=run.policy_rule_text,
+        created_at=run.created_at,
+    )
+
+
+@runs_router.get("/{run_id}", response_model=RunResponse)
+def get_run(
+    run_id: UUID,
+    db: Session = Depends(get_db),
+) -> RunResponse:
+    """Get a run by ID."""
+    run = repo.get_run(db=db, run_id=run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
+    return RunResponse(
+        id=norm_uuid(run.id),
+        name=run.name,
+        policy_rule_text=run.policy_rule_text,
+        created_at=run.created_at,
+    )
+
+
+@runs_router.get("/", response_model=RunListResponse)
+def list_runs(
+    limit: int = 50,
+    offset: int = 0,
+    db: Session = Depends(get_db),
+) -> RunListResponse:
+    """List all runs, most recent first."""
+    runs = repo.list_runs(db=db, limit=limit, offset=offset)
+    return RunListResponse(
+        runs=[
+            RunResponse(
+                id=norm_uuid(r.id),
+                name=r.name,
+                policy_rule_text=r.policy_rule_text,
+                created_at=r.created_at,
+            )
+            for r in runs
+        ],
+        total=len(runs),
+    )
+
+
+@runs_router.get("/{run_id}/summary", response_model=dict)
+def get_run_summary(
+    run_id: UUID,
+    db: Session = Depends(get_db),
+) -> dict:
+    """Get comprehensive summary of a run's artifacts."""
+    run = repo.get_run(db=db, run_id=run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
+
+    summary: dict = {
+        "run": {
+            "id": str(norm_uuid(run.id)),
+            "name": run.name,
+            "policy_rule_text": run.policy_rule_text,
+            "created_at": run.created_at.isoformat(),
+        },
+        "hypotheses": None,
+        "graph": None,
+        "signals": None,
+        "belief": None,
+        "simulation": None,
+    }
+
+    hypothesis_set = repo.get_latest_hypothesis_set(db=db, run_id=run_id)
+    if hypothesis_set:
+        summary["hypotheses"] = {
+            "count": len(hypothesis_set.hypotheses_json),
+            "timestamp": hypothesis_set.created_at.isoformat(),
+        }
+
+    graph = repo.get_latest_graph(db=db, run_id=run_id)
+    if graph:
+        graph_json = graph.graph_json
+        summary["graph"] = {
+            "nodes": len(graph_json.get("nodes", [])),
+            "edges": len(graph_json.get("edges", [])),
+            "timestamp": graph.created_at.isoformat(),
+        }
+
+    signal_set = repo.get_latest_signals(db=db, run_id=run_id)
+    if signal_set:
+        summary["signals"] = {
+            "count": len(signal_set.signals_json),
+            "timestamp": signal_set.created_at.isoformat(),
+        }
+
+    belief_state = repo.get_latest_belief_state(db=db, run_id=run_id)
+    if belief_state:
+        beliefs = belief_state.belief_json
+        sorted_beliefs = sorted(beliefs.items(), key=lambda x: x[1], reverse=True)[:5]
+        summary["belief"] = {
+            "top_5": [{"hid": hid, "probability": prob} for hid, prob in sorted_beliefs],
+            "timestamp": belief_state.created_at.isoformat(),
+        }
+
+    simulation = repo.get_latest_simulation(db=db, run_id=run_id)
+    if simulation:
+        result_json = simulation.result_json
+        trajectories = result_json.get("trajectories", [])
+        summary["simulation"] = {
+            "top_3": [
+                {
+                    "name": t["name"],
+                    "probability": t["probability"],
+                    "active_hypotheses": t["active_hypotheses"],
+                }
+                for t in trajectories[:3]
+            ],
+            "timestamp": simulation.created_at.isoformat(),
+        }
+
+    return summary
+
+
+# ============================================================================
 # PIPELINE ENDPOINTS
 # ============================================================================
 
 
-@router.post("/hypotheses", response_model=HypothesesResponse, status_code=201)
+@pipeline_router.post("/hypotheses", response_model=HypothesesResponse, status_code=201)
 def save_hypotheses(
     run_id: UUID,
     request: HypothesesRequest,
     db: Session = Depends(get_db),
 ) -> HypothesesResponse:
-    """
-    Save hypotheses for a run.
-    
-    Args:
-        run_id: Parent run UUID
-        request: Hypotheses to save
-        db: Database session
-        
-    Returns:
-        Saved hypothesis set details
-        
-    Raises:
-        HTTPException: 404 if run not found
-    """
-    # Verify run exists
+    """Save hypotheses for a run."""
     run = repo.get_run(db=db, run_id=run_id)
     if not run:
         raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
-    
-    # Convert Pydantic models to dict for JSONB storage
+
     hypotheses_json = [h.model_dump() for h in request.hypotheses]
-    
-    # Save to database
+
     hypothesis_set = repo.save_hypothesis_set(
         db=db,
         run_id=run_id,
         hypotheses_json=hypotheses_json,
     )
-    
+
     return HypothesesResponse(
         id=norm_uuid(hypothesis_set.id),
         run_id=norm_uuid(hypothesis_set.run_id),
@@ -205,58 +361,38 @@ def save_hypotheses(
     )
 
 
-@router.post("/graph/validate-and-save", response_model=GraphResponse, status_code=201)
+@pipeline_router.post("/graph/validate-and-save", response_model=GraphResponse, status_code=201)
 def validate_and_save_graph(
     run_id: UUID,
     request: GraphRequest,
     db: Session = Depends(get_db),
 ) -> GraphResponse:
-    """
-    Validate hypothesis graph and save if valid.
-    
-    Calls graph_builder.validate_graph() then persists.
-    
-    Args:
-        run_id: Parent run UUID
-        request: Graph edges
-        db: Database session
-        
-    Returns:
-        Graph validation results and saved graph details
-        
-    Raises:
-        HTTPException: 404 if run not found
-    """
-    # Verify run exists
+    """Validate hypothesis graph and save if valid."""
     run = repo.get_run(db=db, run_id=run_id)
     if not run:
         raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
-    
-    # Load hypotheses for graph building
+
     hypothesis_set = repo.get_latest_hypothesis_set(db=db, run_id=run_id)
     if not hypothesis_set:
         raise HTTPException(
             status_code=400,
             detail=f"No hypotheses found for run {run_id}. Upload hypotheses first.",
         )
-    
+
     hypotheses_dicts = hypothesis_set.hypotheses_json
-    
-    # Build and validate graph using engine
+
     graph = build_graph(hypotheses=hypotheses_dicts, edges=request.edges)
     errors = validate_graph(hypotheses=hypotheses_dicts, edges=request.edges)
     is_valid = len(errors) == 0
-    
-    # Convert graph to JSON for storage
+
     graph_json = nx.node_link_data(graph)
-    
-    # Save to database
+
     hypothesis_graph = repo.save_graph(
         db=db,
         run_id=run_id,
         graph_json=graph_json,
     )
-    
+
     return GraphResponse(
         id=norm_uuid(hypothesis_graph.id),
         run_id=norm_uuid(hypothesis_graph.run_id),
@@ -268,35 +404,19 @@ def validate_and_save_graph(
     )
 
 
-@router.post("/signals", response_model=SignalsResponse, status_code=201)
+@pipeline_router.post("/signals", response_model=SignalsResponse, status_code=201)
 def save_signals(
     run_id: UUID,
     request: SignalsRequest,
     db: Session = Depends(get_db),
 ) -> SignalsResponse:
-    """
-    Save signals for a run.
-    
-    Args:
-        run_id: Parent run UUID
-        request: Signals to save
-        db: Database session
-        
-    Returns:
-        Saved signal set details
-        
-    Raises:
-        HTTPException: 404 if run not found
-    """
-    # Verify run exists
+    """Save signals for a run."""
     run = repo.get_run(db=db, run_id=run_id)
     if not run:
         raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
-    
-    # Convert Pydantic models to dict for JSONB storage
+
     signals_json = [s.model_dump(mode="json") for s in request.signals]
-    
-    # Save to database
+
     try:
         signal_set = repo.save_signals(
             db=db,
@@ -306,7 +426,7 @@ def save_signals(
     except Exception:
         logger.exception("Failed to save signals")
         raise
-    
+
     return SignalsResponse(
         id=norm_uuid(signal_set.id),
         run_id=norm_uuid(signal_set.run_id),
@@ -315,69 +435,46 @@ def save_signals(
     )
 
 
-@router.post("/belief/init", response_model=InitPriorsResponse, status_code=201)
+@pipeline_router.post("/belief/init", response_model=InitPriorsResponse, status_code=201)
 def initialize_priors(
     run_id: UUID,
     request: InitPriorsRequest,
     db: Session = Depends(get_db),
 ) -> InitPriorsResponse:
-    """
-    Initialize prior beliefs for hypotheses.
-    
-    Calls belief.init_priors() then persists.
-    
-    Args:
-        run_id: Parent run UUID
-        request: Prior initialization parameters
-        db: Database session
-        
-    Returns:
-        Initialized belief state details
-        
-    Raises:
-        HTTPException: 404 if run not found, 400 if hypotheses not found
-    """
-    # Verify run exists
+    """Initialize prior beliefs for hypotheses."""
     run = repo.get_run(db=db, run_id=run_id)
     if not run:
         raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
-    
-    # Load latest hypotheses
+
     hypothesis_set = repo.get_latest_hypothesis_set(db=db, run_id=run_id)
     if not hypothesis_set:
         raise HTTPException(
             status_code=400,
             detail=f"No hypotheses found for run {run_id}. Save hypotheses first.",
         )
-    
-    # Convert JSON to Pydantic models for engine
-    # Add system fields that engine might reference
-    from datetime import datetime, timezone
-    from uuid import uuid4
+
     hypotheses = [
         Hypothesis(
             **h,
             id=uuid4(),
             run_id=run_id,
-            created_at=datetime.now(timezone.utc)
-        ) 
+            created_at=datetime.now(timezone.utc),
+        )
         for h in hypothesis_set.hypotheses_json
     ]
-    
-    # Initialize priors using engine
+
     belief_state = belief.init_priors(
         hypotheses=hypotheses,
         strategy=request.strategy,
     )
-    
-    # Save to database
+
     saved_belief_state = repo.save_belief_state(
         db=db,
         run_id=run_id,
         belief_json=belief_state.beliefs,
         explanation_log=belief_state.explanation_log,
     )
-    
+
     return InitPriorsResponse(
         id=norm_uuid(saved_belief_state.id),
         run_id=norm_uuid(saved_belief_state.run_id),
@@ -387,57 +484,38 @@ def initialize_priors(
     )
 
 
-@router.post("/belief/update", response_model=UpdateBeliefsResponse, status_code=201)
+@pipeline_router.post("/belief/update", response_model=UpdateBeliefsResponse, status_code=201)
 def update_beliefs(
     run_id: UUID,
     request: UpdateBeliefsRequest,
     db: Session = Depends(get_db),
 ) -> UpdateBeliefsResponse:
-    """
-    Update beliefs using Bayesian inference.
-    
-    Loads latest belief state, hypotheses, graph, and signals from DB.
-    Calls belief.update_beliefs() then persists new state.
-    
-    Args:
-        run_id: Parent run UUID
-        request: Update parameters (optional new signals)
-        db: Database session
-        
-    Returns:
-        Updated belief state details
-        
-    Raises:
-        HTTPException: 404 if run not found, 400 if required artifacts missing
-    """
-    # Verify run exists
+    """Update beliefs using Bayesian inference."""
     run = repo.get_run(db=db, run_id=run_id)
     if not run:
         raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
-    
-    # Load required artifacts from database
+
     current_belief_state_db = repo.get_latest_belief_state(db=db, run_id=run_id)
     if not current_belief_state_db:
         raise HTTPException(
             status_code=400,
             detail=f"No belief state found for run {run_id}. Initialize priors first.",
         )
-    
+
     hypothesis_set = repo.get_latest_hypothesis_set(db=db, run_id=run_id)
     if not hypothesis_set:
         raise HTTPException(
             status_code=400,
             detail=f"No hypotheses found for run {run_id}.",
         )
-    
+
     hypothesis_graph_db = repo.get_latest_graph(db=db, run_id=run_id)
     if not hypothesis_graph_db:
         raise HTTPException(
             status_code=400,
             detail=f"No hypothesis graph found for run {run_id}.",
         )
-    
-    # Use provided signals or load from database
+
     if request.signals:
         signals = request.signals
     else:
@@ -452,18 +530,17 @@ def update_beliefs(
                 **s,
                 id=uuid4(),
                 run_id=run_id,
-                created_at=datetime.now(timezone.utc)
+                created_at=datetime.now(timezone.utc),
             )
             for s in signal_set.signals_json
         ]
-    
-    # Convert artifacts to engine format
+
     hypotheses = [
         Hypothesis(
             **h,
             id=uuid4(),
             run_id=run_id,
-            created_at=datetime.now(timezone.utc)
+            created_at=datetime.now(timezone.utc),
         )
         for h in hypothesis_set.hypotheses_json
     ]
@@ -475,22 +552,20 @@ def update_beliefs(
         timestamp=current_belief_state_db.created_at,
     )
     hypothesis_graph = nx.node_link_graph(hypothesis_graph_db.graph_json)
-    
-    # Update beliefs using engine
+
     updated_belief_state = belief.update_beliefs(
         state=current_belief_state,
         signals=signals,
         graph=hypothesis_graph,
     )
-    
-    # Save to database
+
     saved_belief_state = repo.save_belief_state(
         db=db,
         run_id=run_id,
         belief_json=updated_belief_state.beliefs,
         explanation_log=updated_belief_state.explanation_log,
     )
-    
+
     return UpdateBeliefsResponse(
         id=norm_uuid(saved_belief_state.id),
         run_id=norm_uuid(saved_belief_state.run_id),
@@ -500,63 +575,44 @@ def update_beliefs(
     )
 
 
-@router.post("/simulate", response_model=SimulateResponse, status_code=201)
+@pipeline_router.post("/simulate", response_model=SimulateResponse, status_code=201)
 def simulate_trajectories_endpoint(
     run_id: UUID,
     request: SimulateRequest,
     db: Session = Depends(get_db),
 ) -> SimulateResponse:
-    """
-    Run Monte Carlo trajectory simulation.
-    
-    Loads latest belief state, hypotheses, and graph from DB.
-    Calls simulator.simulate_trajectories() then persists results.
-    
-    Args:
-        run_id: Parent run UUID
-        request: Simulation parameters
-        db: Database session
-        
-    Returns:
-        Simulation results
-        
-    Raises:
-        HTTPException: 404 if run not found, 400 if required artifacts missing
-    """
-    # Verify run exists
+    """Run Monte Carlo trajectory simulation."""
     run = repo.get_run(db=db, run_id=run_id)
     if not run:
         raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
-    
-    # Load required artifacts from database
+
     current_belief_state_db = repo.get_latest_belief_state(db=db, run_id=run_id)
     if not current_belief_state_db:
         raise HTTPException(
             status_code=400,
             detail=f"No belief state found for run {run_id}. Initialize or update beliefs first.",
         )
-    
+
     hypothesis_set = repo.get_latest_hypothesis_set(db=db, run_id=run_id)
     if not hypothesis_set:
         raise HTTPException(
             status_code=400,
             detail=f"No hypotheses found for run {run_id}.",
         )
-    
+
     hypothesis_graph_db = repo.get_latest_graph(db=db, run_id=run_id)
     if not hypothesis_graph_db:
         raise HTTPException(
             status_code=400,
             detail=f"No hypothesis graph found for run {run_id}.",
         )
-    
-    # Convert artifacts to engine format
+
     hypotheses = [
         Hypothesis(
             **h,
             id=uuid4(),
             run_id=run_id,
-            created_at=datetime.now(timezone.utc)
+            created_at=datetime.now(timezone.utc),
         )
         for h in hypothesis_set.hypotheses_json
     ]
@@ -568,8 +624,7 @@ def simulate_trajectories_endpoint(
         timestamp=current_belief_state_db.created_at,
     )
     hypothesis_graph = nx.node_link_graph(hypothesis_graph_db.graph_json)
-    
-    # Run simulation using engine
+
     simulation_result = simulator.simulate_trajectories(
         hypotheses=hypotheses,
         graph=hypothesis_graph,
@@ -582,14 +637,15 @@ def simulate_trajectories_endpoint(
         contradict_delta=request.params.contradict_delta,
         top_k=request.params.top_k,
     )
-    
-    # Convert result to dict for storage
+
     result_json = {
         "trajectories": [
             {
                 "name": t.name,
                 "probability": t.probability,
-                "active_hypotheses": list(t.active_hypotheses) if isinstance(t.active_hypotheses, set) else t.active_hypotheses,
+                "active_hypotheses": list(t.active_hypotheses)
+                if isinstance(t.active_hypotheses, set)
+                else t.active_hypotheses,
                 "frequency": t.frequency,
             }
             for t in simulation_result.trajectories
@@ -599,17 +655,16 @@ def simulate_trajectories_endpoint(
         "hotspots": simulation_result.hotspots,
         "parameters": simulation_result.parameters,
     }
-    
+
     params_json = request.params.model_dump()
-    
-    # Save to database
+
     simulation_output = repo.save_simulation_output(
         db=db,
         run_id=run_id,
         params_json=params_json,
         result_json=result_json,
     )
-    
+
     return SimulateResponse(
         id=norm_uuid(simulation_output.id),
         run_id=norm_uuid(simulation_output.run_id),

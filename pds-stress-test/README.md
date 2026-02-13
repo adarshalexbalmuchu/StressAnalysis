@@ -14,17 +14,32 @@ This is **NOT** a recommendation engine. It:
 
 ```
 pds-stress-test/
-├── .devcontainer/          # GitHub Codespaces configuration
 ├── app/
-│   ├── main.py            # FastAPI application entry point
-│   ├── api/v1/            # API routes (interface layer only)
-│   ├── engine/            # Core simulation logic (no FastAPI deps)
-│   ├── schemas/           # Pydantic v2 schemas (contract layer)
-│   └── storage/           # SQLAlchemy models + database layer
-├── data/seeds/            # Domain-specific seed data
-├── tests/                 # Test suite
-└── pyproject.toml         # Dependencies and configuration
+│   ├── main.py             # FastAPI application entry point
+│   ├── config.py           # Application settings
+│   ├── api/v1/
+│   │   ├── __init__.py     # Router aggregation
+│   │   └── router.py       # All API endpoints (runs + pipeline)
+│   ├── engine/
+│   │   ├── graph.py        # Hypothesis graph (build, validate, class API)
+│   │   ├── belief.py       # Bayesian belief update engine
+│   │   └── simulator.py    # Monte Carlo trajectory simulation
+│   ├── schemas/            # Pydantic v2 schemas (contract layer)
+│   └── storage/            # SQLAlchemy models + database layer
+├── alembic/                # Database migrations (single 001_initial_schema)
+├── data/seeds/             # Domain-specific seed data
+├── docs/                   # Technical deep-dive documentation
+├── tests/                  # Test suite
+└── pyproject.toml          # Dependencies and configuration
 ```
+
+## Documentation
+
+For technical deep-dives, see the [docs/](docs/) folder:
+- [PROJECT_STRUCTURE.md](docs/PROJECT_STRUCTURE.md) - Detailed project layout
+- [DEVELOPMENT.md](docs/DEVELOPMENT.md) - Development guide
+- [IMPLEMENTATION_SUMMARY.md](docs/IMPLEMENTATION_SUMMARY.md) - Implementation notes
+- [VERIFICATION_REPORT.md](docs/VERIFICATION_REPORT.md) - Verification results
 
 ## Tech Stack
 

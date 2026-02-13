@@ -13,7 +13,7 @@ from sqlalchemy import desc
 from sqlalchemy.orm import Session
 
 from app.utils.json_safe import json_safe
-from app.storage.models_v2 import (
+from app.storage.models import (
     BeliefState,
     HypothesisGraph,
     HypothesisSet,

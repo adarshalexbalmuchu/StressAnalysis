@@ -7,7 +7,7 @@ Tests graph construction, validation, and subgraph extraction.
 import pytest
 import networkx as nx
 
-from app.engine.graph_builder import (
+from app.engine.graph import (
     build_graph,
     validate_graph,
     extract_subgraph,
