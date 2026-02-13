@@ -177,10 +177,9 @@ def test_update_beliefs_reinforces_edge(sample_hypotheses, sample_graph):
     assert any("H002" in log for log in new_state.explanation_log), \
         "H002 should be mentioned in explanation log"
     
-    # Verify renormalization occurred (beliefs should still sum to ~1)
-    total_prob = sum(new_state.beliefs.values())
-    assert abs(total_prob - 1.0) < 0.01, \
-        f"Beliefs should sum to ~1.0, got {total_prob}"
+    # Verify all beliefs are valid probabilities (independent, no sum-to-1 constraint)
+    for hid, prob in new_state.beliefs.items():
+        assert 0.0 <= prob <= 1.0, f"{hid} has invalid probability {prob}"
 
 
 def test_update_beliefs_depends_on_cap(sample_hypotheses, sample_graph):
@@ -215,10 +214,9 @@ def test_update_beliefs_depends_on_cap(sample_hypotheses, sample_graph):
     assert any("H003" in log for log in new_state.explanation_log), \
         "H003 should be mentioned in explanation log"
     
-    # Verify probabilities still sum to ~1
-    total_prob = sum(new_state.beliefs.values())
-    assert abs(total_prob - 1.0) < 0.05, \
-        f"Beliefs should sum to ~1.0, got {total_prob}"
+    # Verify all probabilities are valid (independent hypotheses — no sum constraint)
+    for hid, prob in new_state.beliefs.items():
+        assert 0.0 <= prob <= 1.0, f"{hid} has invalid probability {prob}"
 
 
 def test_update_beliefs_renormalization(sample_hypotheses):
@@ -245,13 +243,15 @@ def test_update_beliefs_renormalization(sample_hypotheses):
     # Update beliefs
     new_state = update_beliefs(state, signals, nx.DiGraph())
     
-    # Check beliefs still sum to approximately 1
-    total_prob = sum(new_state.beliefs.values())
-    assert abs(total_prob - 1.0) < 0.1, \
-        f"Beliefs sum to {total_prob}, should be renormalized to ~1.0"
+    # Check all beliefs are valid probabilities (independent — no sum constraint)
+    for hid, prob in new_state.beliefs.items():
+        assert 0.0 <= prob <= 1.0, f"{hid} has invalid probability {prob}"
     
-    # Check explanation log mentions renormalization
-    assert any("renormal" in log.lower() for log in new_state.explanation_log)
+    # Strong supporting signals should increase belief above prior
+    for i in range(1, 4):
+        hid = f"H{i:03d}"
+        assert new_state.beliefs[hid] > state.beliefs[hid], \
+            f"{hid} should increase after strong supporting signal"
 
 
 def test_update_beliefs_explanation_log(sample_hypotheses):

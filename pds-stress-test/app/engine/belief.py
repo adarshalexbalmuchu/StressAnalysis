@@ -167,8 +167,10 @@ def update_beliefs(
             )
             continue
         
-        # Calculate likelihood multiplier from signal strength
-        likelihood = _calculate_likelihood(signal)
+        # Calculate P(E|H) — likelihood of observing this signal if H is true
+        likelihood_true = _calculate_likelihood(signal)
+        # P(E|¬H) — complement: likelihood if H is false
+        likelihood_false = 1.0 - likelihood_true
         
         for hid in affected_hids:
             if hid not in new_beliefs:
@@ -177,16 +179,27 @@ def update_beliefs(
             
             old_belief = new_beliefs[hid]
             
-            # Bayesian update: P(H|E) ∝ L(E|H) * P(H)
-            # likelihood > 1.0 increases belief, likelihood < 1.0 decreases it
-            raw_update = old_belief * likelihood
-            new_belief = max(0.01, min(0.99, raw_update))  # Clamp to [0.01, 0.99]
+            # ── Proper Bayesian update ──
+            # P(H|E) = P(E|H) * P(H) / P(E)
+            # P(E)   = P(E|H)*P(H) + P(E|¬H)*P(¬H)   (marginal likelihood)
+            marginal = (
+                likelihood_true * old_belief
+                + likelihood_false * (1.0 - old_belief)
+            )
+            
+            if marginal > 0:
+                posterior = (likelihood_true * old_belief) / marginal
+            else:
+                posterior = old_belief  # Degenerate case — no update
+            
+            new_belief = max(0.01, min(0.99, posterior))  # Clamp to avoid extremes
             
             new_beliefs[hid] = new_belief
             direction = "↑" if new_belief > old_belief else "↓" if new_belief < old_belief else "="
             new_log.append(
                 f"{hid}: {old_belief:.3f} {direction} {new_belief:.3f} | "
-                f"Signal {signal.signal_type.value} (L={likelihood:.2f})"
+                f"Signal {signal.signal_type.value} "
+                f"(P(E|H)={likelihood_true:.3f}, P(E)={marginal:.3f})"
             )
     
     # Step 2: Propagate through graph edges
@@ -200,15 +213,11 @@ def update_beliefs(
             direction = "↑" if new > old else "↓"
             new_log.append(f"{hid}: {old:.3f} {direction} {new:.3f} | {reason}")
     
-    # Step 3: Renormalize probabilities
-    total_prob = sum(new_beliefs.values())
-    if abs(total_prob - 1.0) > 0.01:  # More than 1% deviation
-        normalization_factor = 1.0 / total_prob
-        for hid in new_beliefs:
-            new_beliefs[hid] *= normalization_factor
-        new_log.append(
-            f"Renormalized beliefs (sum was {total_prob:.4f}, factor={normalization_factor:.4f})"
-        )
+    # Step 3: Clamp probabilities (independent hypotheses — no cross-normalization)
+    # These hypotheses are NOT mutually exclusive, so they don't need to sum to 1.
+    # Each P(H_i) is updated independently via Bayes' theorem.
+    for hid in new_beliefs:
+        new_beliefs[hid] = max(0.01, min(0.99, new_beliefs[hid]))
     
     return BeliefState(
         id=uuid4(),
@@ -288,43 +297,45 @@ def _map_signals_to_hypotheses(signals: List[Signal]) -> Dict[SignalType, List[s
 
 def _calculate_likelihood(signal: Signal) -> float:
     """
-    Calculate likelihood multiplier from signal properties.
+    Calculate P(E|H) — the likelihood of observing this signal if hypothesis is true.
     
-    For supporting evidence (positive signals), likelihood should be > 1.0
-    to increase belief when multiplied.
+    This is a proper Bayesian likelihood in [0, 1], NOT a multiplier.
+    Used in Bayes' theorem: P(H|E) = P(E|H) * P(H) / P(E)
     
     Factors:
-        - Signal strength (0.0-1.0 maps to 0.5-2.0 multiplier)
-        - Signal type credibility weight
-        - Recency (could be added in V2)
+        - Signal strength (0.0-1.0): how strongly the signal supports the hypothesis
+        - Signal type credibility weight: institutional credibility of the source
     
     Returns:
-        Multiplier in range [0.5, 2.0] where:
-        - > 1.0 increases belief (supporting evidence)
-        - < 1.0 decreases belief (contradicting evidence)
-        - = 1.0 neutral (no effect)
+        P(E|H) in range [0.05, 0.95] — probability of observing this evidence
+        if the hypothesis is true.
     """
-    # Map signal strength [0, 1] to base multiplier [0.5, 1.5]
-    # strength=0.0 -> 0.5x (strong contradiction)
-    # strength=0.5 -> 1.0x (neutral)
-    # strength=1.0 -> 1.5x (strong support)
-    base_multiplier = 0.5 + signal.strength
+    # Base likelihood from signal strength
+    # strength=0.0 -> P(E|H)=0.1 (signal contradicts H)
+    # strength=0.5 -> P(E|H)=0.5 (neutral)
+    # strength=1.0 -> P(E|H)=0.9 (signal strongly supports H)
+    base_likelihood = 0.1 + signal.strength * 0.8  # Maps [0,1] -> [0.1, 0.9]
     
-    # Adjust by signal type credibility (adds up to +0.5x boost)
-    type_weights = {
-        SignalType.AUDIT: 0.5,  # +50% boost to multiplier
-        SignalType.COURT_OBSERVATION: 0.4,
-        SignalType.ADMIN_CIRCULAR: 0.3,
-        SignalType.FIELD_REPORT: 0.2,
-        SignalType.MEDIA_REPORT: 0.1,
-        SignalType.GRIEVANCE: 0.0,  # No extra boost
+    # Credibility boost from signal type (scales the base toward extremes)
+    type_credibility = {
+        SignalType.AUDIT: 0.20,           # Audits are highly credible
+        SignalType.COURT_OBSERVATION: 0.15,
+        SignalType.ADMIN_CIRCULAR: 0.10,
+        SignalType.FIELD_REPORT: 0.08,
+        SignalType.MEDIA_REPORT: 0.04,
+        SignalType.GRIEVANCE: 0.0,         # Grievances: no extra credibility
     }
     
-    type_weight = type_weights.get(signal.signal_type, 0.0)
-    multiplier = base_multiplier + type_weight
+    credibility = type_credibility.get(signal.signal_type, 0.0)
     
-    # Clamp to reasonable range
-    return max(0.5, min(2.0, multiplier))
+    # Push likelihood toward 1.0 for supporting signals, toward 0.0 for contradicting
+    if base_likelihood >= 0.5:
+        likelihood = base_likelihood + credibility * (1.0 - base_likelihood)
+    else:
+        likelihood = base_likelihood - credibility * base_likelihood
+    
+    # Clamp to avoid zero/one extremes (prevents belief collapse)
+    return max(0.05, min(0.95, likelihood))
 
 
 def _propagate_through_graph(

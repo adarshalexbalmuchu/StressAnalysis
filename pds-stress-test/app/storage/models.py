@@ -1,186 +1,258 @@
 """
-SQLAlchemy models for persistent storage.
+SQLAlchemy 2.0 ORM Models for Policy Stress-Testing Engine.
 
-All models use UUID primary keys and include proper timestamps.
-JSONB fields are used for complex artifacts (graphs, belief states, simulation results).
+All artifacts stored as JSON for auditability and reproducibility.
+Foreign keys cascade delete. Time-indexed for belief evolution tracking.
+
+NO business logic. NO API imports. NO LLM logic.
 """
 
 import uuid
-from datetime import datetime
-from typing import Any, Dict
+from datetime import datetime, timezone
 
-from sqlalchemy import (
-    JSON,
-    Column,
-    DateTime,
-    Enum,
-    Float,
-    ForeignKey,
-    Integer,
-    String,
-    Text,
-)
-from sqlalchemy.dialects.postgresql import JSONB, UUID
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import relationship
-from sqlalchemy.sql import func
+from sqlalchemy import DateTime, ForeignKey, String, Text, JSON, func
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.types import TypeDecorator, CHAR
+import uuid as uuid_lib
 
-from app.schemas import EdgeType, RunStatus, SignalType, TimeHorizon, TrajectoryStatus
-
-Base = declarative_base()
+from app.storage.database import Base
 
 
-class Run(Base):
-    """Represents a single stress-test run for a policy rule."""
+# UUID type that works with both PostgreSQL and SQLite
+class UUID(TypeDecorator):
+    """Platform-independent UUID type."""
+    impl = CHAR
+    cache_ok = True
 
-    __tablename__ = "runs"
+    def load_dialect_impl(self, dialect):
+        if dialect.name == 'postgresql':
+            return dialect.type_descriptor(PG_UUID(as_uuid=True))
+        else:
+            return dialect.type_descriptor(CHAR(36))
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    policy_rule = Column(String(500), nullable=False, index=True)
-    domain = Column(String(100), nullable=False, default="PDS", index=True)
-    description = Column(Text, nullable=True)
-    status = Column(
-        Enum(RunStatus),
-        nullable=False,
-        default=RunStatus.CREATED,
-        index=True,
-    )
-    hypothesis_count = Column(Integer, nullable=False, default=0)
-    metadata = Column(JSONB, nullable=False, default=dict)
+    def process_bind_param(self, value, dialect):
+        if value is None:
+            return value
+        elif dialect.name == 'postgresql':
+            return str(value)
+        else:
+            if isinstance(value, uuid_lib.UUID):
+                return str(value)
+            return value
 
-    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
-    updated_at = Column(
+    def process_result_value(self, value, dialect):
+        if value is None:
+            return value
+        if isinstance(value, uuid_lib.UUID):
+            return value
+        return uuid_lib.UUID(value)
+
+
+class PolicyRun(Base):
+    """
+    Policy stress-test run.
+
+    Parent entity for all artifacts in a stress-testing session.
+    """
+
+    __tablename__ = "policy_runs"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(), primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(200), nullable=False, index=True)
+    policy_rule_text: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
         server_default=func.now(),
-        onupdate=func.now(),
+    )
+
+    # Relationships (cascade delete)
+    hypothesis_sets = relationship(
+        "HypothesisSet",
+        back_populates="run",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    hypothesis_graphs = relationship(
+        "HypothesisGraph",
+        back_populates="run",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    signals = relationship(
+        "SignalSet",
+        back_populates="run",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    belief_states = relationship(
+        "BeliefState",
+        back_populates="run",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="BeliefState.created_at",
+    )
+    simulations = relationship(
+        "SimulationOutput",
+        back_populates="run",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+
+    def __repr__(self) -> str:
+        return f"<PolicyRun(id={self.id}, name='{self.name}')>"
+
+
+class HypothesisSet(Base):
+    """
+    Hypothesis set (seeded or generated) for a run.
+
+    Stores hypotheses as JSON array for full auditability.
+    """
+
+    __tablename__ = "hypothesis_sets"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(), primary_key=True, default=uuid.uuid4)
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(),
+        ForeignKey("policy_runs.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    hypotheses_json: Mapped[list] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
     )
 
     # Relationships
-    hypotheses = relationship("Hypothesis", back_populates="run", cascade="all, delete-orphan")
-    graphs = relationship("HypothesisGraphModel", back_populates="run", cascade="all, delete-orphan")
-    belief_states = relationship("BeliefStateModel", back_populates="run", cascade="all, delete-orphan")
-    signals = relationship("SignalModel", back_populates="run", cascade="all, delete-orphan")
-    simulations = relationship("SimulationResultModel", back_populates="run", cascade="all, delete-orphan")
+    run = relationship("PolicyRun", back_populates="hypothesis_sets")
 
     def __repr__(self) -> str:
-        return f"<Run(id={self.id}, policy_rule='{self.policy_rule[:50]}', status={self.status})>"
+        return f"<HypothesisSet(id={self.id}, run_id={self.run_id})>"
 
 
-class Hypothesis(Base):
-    """Represents a mechanistic hypothesis about stakeholder adaptation."""
+class HypothesisGraph(Base):
+    """
+    Hypothesis graph (edges + validation status) for a run.
 
-    __tablename__ = "hypotheses"
-
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    run_id = Column(UUID(as_uuid=True), ForeignKey("runs.id", ondelete="CASCADE"), nullable=False, index=True)
-    
-    # Core hypothesis fields
-    hid = Column(String(20), nullable=False, index=True)
-    stakeholders = Column(JSONB, nullable=False)  # List[str]
-    triggers = Column(JSONB, nullable=False)  # List[str]
-    mechanism = Column(Text, nullable=False)
-    primary_effects = Column(JSONB, nullable=False)  # List[str]
-    secondary_effects = Column(JSONB, nullable=False, default=list)  # List[str]
-    time_horizon = Column(Enum(TimeHorizon), nullable=False)
-    confidence_notes = Column(Text, nullable=True)
-
-    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
-
-    # Relationships
-    run = relationship("Run", back_populates="hypotheses")
-
-    def __repr__(self) -> str:
-        return f"<Hypothesis(id={self.id}, hid='{self.hid}', run_id={self.run_id})>"
-
-
-class HypothesisGraphModel(Base):
-    """Stores the hypothesis graph structure as a JSONB artifact."""
+    Stores graph structure as JSON dict (nodes + edges).
+    """
 
     __tablename__ = "hypothesis_graphs"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    run_id = Column(UUID(as_uuid=True), ForeignKey("runs.id", ondelete="CASCADE"), nullable=False, index=True)
-    
-    # Graph structure stored as JSONB
-    nodes = Column(JSONB, nullable=False)  # List[str] of HIDs
-    edges = Column(JSONB, nullable=False)  # List[Dict] of edge specifications
-    metadata = Column(JSONB, nullable=False, default=dict)  # Graph-level metadata
-
-    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    id: Mapped[uuid.UUID] = mapped_column(UUID(), primary_key=True, default=uuid.uuid4)
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(),
+        ForeignKey("policy_runs.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    graph_json: Mapped[dict] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
 
     # Relationships
-    run = relationship("Run", back_populates="graphs")
+    run = relationship("PolicyRun", back_populates="hypothesis_graphs")
 
     def __repr__(self) -> str:
-        return f"<HypothesisGraph(id={self.id}, run_id={self.run_id}, nodes={len(self.nodes) if self.nodes else 0})>"
+        return f"<HypothesisGraph(id={self.id}, run_id={self.run_id})>"
 
 
-class BeliefStateModel(Base):
-    """Stores belief state snapshots over time."""
+class SignalSet(Base):
+    """
+    Signal set (evidence batch) for a run.
+
+    Stores signals as JSON array.
+    """
+
+    __tablename__ = "signal_sets"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(), primary_key=True, default=uuid.uuid4)
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(),
+        ForeignKey("policy_runs.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    signals_json: Mapped[list] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    # Relationships
+    run = relationship("PolicyRun", back_populates="signals")
+
+    def __repr__(self) -> str:
+        return f"<SignalSet(id={self.id}, run_id={self.run_id})>"
+
+
+class BeliefState(Base):
+    """
+    Belief state snapshot (probabilities + explanation) for a run.
+
+    Time-indexed to support belief evolution tracking.
+    Stores belief_json as dict (hid -> probability) and explanation_log as list.
+    """
 
     __tablename__ = "belief_states"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    run_id = Column(UUID(as_uuid=True), ForeignKey("runs.id", ondelete="CASCADE"), nullable=False, index=True)
-    
-    # Belief state data
-    beliefs = Column(JSONB, nullable=False)  # Dict[str, float] - HID -> probability
-    explanation_log = Column(JSONB, nullable=False, default=list)  # List[str]
-    
-    timestamp = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), index=True)
+    id: Mapped[uuid.UUID] = mapped_column(UUID(), primary_key=True, default=uuid.uuid4)
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(),
+        ForeignKey("policy_runs.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    belief_json: Mapped[dict] = mapped_column(JSON, nullable=False)
+    explanation_log: Mapped[list] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        index=True,
+    )
 
     # Relationships
-    run = relationship("Run", back_populates="belief_states")
+    run = relationship("PolicyRun", back_populates="belief_states")
 
     def __repr__(self) -> str:
-        return f"<BeliefState(id={self.id}, run_id={self.run_id}, timestamp={self.timestamp})>"
+        return f"<BeliefState(id={self.id}, run_id={self.run_id}, created_at={self.created_at})>"
 
 
-class SignalModel(Base):
-    """Represents an evidence signal that can update beliefs."""
+class SimulationOutput(Base):
+    """
+    Simulation output (trajectories + stats) for a run.
 
-    __tablename__ = "signals"
+    Stores both params_json and result_json as dicts.
+    """
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    run_id = Column(UUID(as_uuid=True), ForeignKey("runs.id", ondelete="CASCADE"), nullable=False, index=True)
-    
-    # Signal data
-    signal_type = Column(Enum(SignalType), nullable=False, index=True)
-    content = Column(Text, nullable=False)
-    source = Column(String(500), nullable=False)
-    date_observed = Column(DateTime(timezone=True), nullable=False, index=True)
-    affected_hids = Column(JSONB, nullable=False)  # List[str]
-    strength = Column(Float, nullable=False, default=0.5)
-    metadata = Column(JSONB, nullable=False, default=dict)
+    __tablename__ = "simulation_outputs"
 
-    created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    id: Mapped[uuid.UUID] = mapped_column(UUID(), primary_key=True, default=uuid.uuid4)
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(),
+        ForeignKey("policy_runs.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    params_json: Mapped[dict] = mapped_column(JSON, nullable=False)
+    result_json: Mapped[dict] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
 
     # Relationships
-    run = relationship("Run", back_populates="signals")
+    run = relationship("PolicyRun", back_populates="simulations")
 
     def __repr__(self) -> str:
-        return f"<Signal(id={self.id}, type={self.signal_type}, run_id={self.run_id})>"
-
-
-class SimulationResultModel(Base):
-    """Stores complete simulation results including all trajectories."""
-
-    __tablename__ = "simulation_results"
-
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    run_id = Column(UUID(as_uuid=True), ForeignKey("runs.id", ondelete="CASCADE"), nullable=False, index=True)
-    
-    # Simulation results stored as JSONB
-    trajectories = Column(JSONB, nullable=False)  # List[Dict] of trajectory data
-    summary_statistics = Column(JSONB, nullable=False)
-    sensitivity_hotspots = Column(JSONB, nullable=False)  # List[str] of HIDs
-    parameters = Column(JSONB, nullable=False)  # Simulation parameters
-
-    timestamp = Column(DateTime(timezone=True), nullable=False, server_default=func.now(), index=True)
-
-    # Relationships
-    run = relationship("Run", back_populates="simulations")
-
-    def __repr__(self) -> str:
-        return f"<SimulationResult(id={self.id}, run_id={self.run_id}, trajectories={len(self.trajectories) if self.trajectories else 0})>"
+        return f"<SimulationOutput(id={self.id}, run_id={self.run_id})>"

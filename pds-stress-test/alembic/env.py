@@ -9,7 +9,7 @@ from alembic import context
 # Import the Base from database module (contains declarative base)
 from app.storage.database import Base
 # Import all models to register them with Base.metadata
-from app.storage.models_v2 import (
+from app.storage.models import (
     BeliefState,
     HypothesisGraph,
     HypothesisSet,

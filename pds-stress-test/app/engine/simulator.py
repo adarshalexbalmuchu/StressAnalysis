@@ -16,7 +16,6 @@ import networkx as nx
 import numpy as np
 
 from app.schemas import BeliefState, Hypothesis
-from app.schemas import BeliefState, Hypothesis
 
 
 @dataclass
@@ -74,9 +73,9 @@ def simulate_trajectories(
     Returns:
         SimulationResult with top trajectories and sensitivity hotspots
     """
-    # Set random seed for determinism
-    np.random.seed(seed)
-    random.seed(seed)
+    # Use thread-safe RNG (not global np.random.seed)
+    rng = np.random.default_rng(seed)
+    py_rng = random.Random(seed)
 
     # Build HID to hypothesis map
     hid_map = {h.hid: h for h in hypotheses}
@@ -143,10 +142,10 @@ def simulate_trajectories(
             # Apply activation threshold
             if prob >= activation_threshold:
                 # Sample activation
-                if np.random.random() < prob:
+                if rng.random() < prob:
                     active_hids.append(hid)
             elif prob > 0.1:  # Allow some chance even below threshold
-                if np.random.random() < prob * 0.5:
+                if rng.random() < prob * 0.5:
                     active_hids.append(hid)
 
         # Step 4: Enforce depends_on constraints (hard gate)
@@ -201,6 +200,231 @@ def simulate_trajectories(
         total_runs=n_runs,
         seed=seed,
         hotspots=hotspots,
+        parameters=sim_params,
+    )
+
+
+# ============================================================================
+# TEMPORAL TRAJECTORY SIMULATION
+# ============================================================================
+
+
+@dataclass
+class TemporalEvent:
+    """A single event in a temporal trajectory."""
+
+    step: int
+    label: str
+    activated_hids: list[str]
+    deactivated_hids: list[str]
+    belief_snapshot: dict[str, float]
+    cascading_effects: list[str]
+
+
+@dataclass
+class TemporalTrajectory:
+    """A multi-step trajectory showing how events chain over time."""
+
+    name: str
+    events: list[TemporalEvent]
+    final_active: list[str]
+    probability: float
+    frequency: int
+
+
+@dataclass
+class TemporalSimulationResult:
+    """Result of temporal trajectory simulation."""
+
+    trajectories: list[TemporalTrajectory]
+    total_runs: int
+    time_steps: int
+    seed: int
+    parameters: dict[str, Any]
+
+
+def simulate_temporal_trajectories(
+    *,
+    hypotheses: list[Hypothesis],
+    graph: nx.DiGraph,
+    belief: BeliefState,
+    time_steps: int = 6,
+    step_labels: list[str] | None = None,
+    n_runs: int = 1000,
+    seed: int = 42,
+    activation_threshold: float = 0.5,
+    reinforce_delta: float = 0.15,
+    contradict_delta: float = 0.15,
+    decay_rate: float = 0.02,
+    top_k: int = 5,
+) -> TemporalSimulationResult:
+    """
+    Run temporal Monte Carlo simulation — models event chains over time.
+
+    Unlike the basic simulator (single-snapshot activation), this produces
+    multi-step trajectories where:
+    - Hypotheses activate/deactivate over time
+    - Graph propagation creates cascading effects step-by-step
+    - Beliefs evolve with a natural decay toward priors
+    - Each time step builds on the previous state
+
+    This directly addresses the promise of "multiple plausible policy
+    impact trajectories" as temporal event chains.
+
+    Args:
+        hypotheses: List of hypotheses to simulate.
+        graph: Hypothesis relationship graph.
+        belief: Current belief state.
+        time_steps: Number of temporal steps to simulate.
+        step_labels: Optional labels for each step (e.g., ["Month 1", ...]).
+        n_runs: Number of Monte Carlo runs.
+        seed: Random seed.
+        activation_threshold: Minimum prob for activation consideration.
+        reinforce_delta: Boost from reinforces edges.
+        contradict_delta: Reduction from contradicts edges.
+        decay_rate: Per-step probability drift toward 0.5 (natural decay).
+        top_k: Number of top trajectories to return.
+
+    Returns:
+        TemporalSimulationResult with top temporal trajectories.
+    """
+    rng = np.random.default_rng(seed)
+    hid_map = {h.hid: h for h in hypotheses}
+
+    if not step_labels:
+        step_labels = [f"Month {i+1}" for i in range(time_steps)]
+
+    sim_params = {
+        "time_steps": time_steps,
+        "n_runs": n_runs,
+        "seed": seed,
+        "activation_threshold": activation_threshold,
+        "reinforce_delta": reinforce_delta,
+        "contradict_delta": contradict_delta,
+        "decay_rate": decay_rate,
+        "top_k": top_k,
+    }
+
+    # Collect trajectory signatures (tuple of per-step activation tuples)
+    trajectory_events_pool: list[tuple[tuple[str, ...], ...]] = []
+
+    for _run_idx in range(n_runs):
+        # Initialize beliefs for this run
+        current_probs = {
+            hid: belief.beliefs.get(hid, 0.0) for hid in hid_map.keys()
+        }
+
+        run_signature: list[tuple[str, ...]] = []
+
+        for step in range(time_steps):
+            # 1. Apply graph propagation (one step)
+            new_probs = current_probs.copy()
+            for hid in hid_map.keys():
+                if graph.has_node(hid):
+                    for source in graph.predecessors(hid):
+                        if source not in current_probs:
+                            continue
+                        edge_data = graph.get_edge_data(source, hid)
+                        relation = edge_data.get("relation", "")
+                        source_prob = current_probs[source]
+
+                        if relation == "reinforces":
+                            boost = source_prob * reinforce_delta
+                            new_probs[hid] = min(0.99, new_probs[hid] + boost)
+                        elif relation == "contradicts":
+                            suppress = source_prob * contradict_delta
+                            new_probs[hid] = max(0.01, new_probs[hid] - suppress)
+                        elif relation == "depends_on":
+                            if source_prob < 0.3:
+                                new_probs[hid] = min(
+                                    new_probs[hid], source_prob + 0.1
+                                )
+
+            # 2. Apply natural decay toward 0.5 (uncertainty increases over time)
+            for hid in new_probs:
+                distance_from_center = new_probs[hid] - 0.5
+                new_probs[hid] = 0.5 + distance_from_center * (1.0 - decay_rate)
+
+            current_probs = new_probs
+
+            # 3. Sample activations at this step
+            active_hids = []
+            for hid, prob in current_probs.items():
+                if prob >= activation_threshold:
+                    if rng.random() < prob:
+                        active_hids.append(hid)
+                elif prob > 0.1:
+                    if rng.random() < prob * 0.5:
+                        active_hids.append(hid)
+
+            # 4. Enforce depends_on (hard gate)
+            final_active = set(active_hids)
+            for hid in list(final_active):
+                if graph.has_node(hid):
+                    for source in graph.predecessors(hid):
+                        edge_data = graph.get_edge_data(source, hid)
+                        if edge_data.get("relation") == "depends_on":
+                            if source not in final_active:
+                                final_active.discard(hid)
+                                break
+
+            run_signature.append(tuple(sorted(final_active)))
+
+        trajectory_events_pool.append(tuple(run_signature))
+
+    # Cluster by full temporal signature
+    signature_counts = Counter(trajectory_events_pool)
+    top_signatures = signature_counts.most_common(top_k)
+
+    # Build named trajectories
+    trajectories: list[TemporalTrajectory] = []
+    for idx, (temporal_sig, count) in enumerate(top_signatures, start=1):
+        events: list[TemporalEvent] = []
+        prev_active: set[str] = set()
+
+        for step, (step_active_hids, label) in enumerate(
+            zip(temporal_sig, step_labels)
+        ):
+            active_set = set(step_active_hids)
+            newly_activated = sorted(active_set - prev_active)
+            newly_deactivated = sorted(prev_active - active_set)
+
+            # Gather effects from active hypotheses
+            cascading = []
+            for hid in newly_activated:
+                if hid in hid_map:
+                    h = hid_map[hid]
+                    cascading.extend(h.primary_effects[:1])
+
+            events.append(TemporalEvent(
+                step=step,
+                label=label,
+                activated_hids=list(step_active_hids),
+                deactivated_hids=newly_deactivated,
+                belief_snapshot={},  # Not stored per-sample (too expensive)
+                cascading_effects=cascading,
+            ))
+            prev_active = active_set
+
+        # Name based on the final active set
+        final_active = list(temporal_sig[-1]) if temporal_sig else []
+        name = _name_trajectory(
+            tuple(final_active), hid_map, idx
+        )
+
+        trajectories.append(TemporalTrajectory(
+            name=name,
+            events=events,
+            final_active=final_active,
+            probability=count / n_runs,
+            frequency=count,
+        ))
+
+    return TemporalSimulationResult(
+        trajectories=trajectories,
+        total_runs=n_runs,
+        time_steps=time_steps,
+        seed=seed,
         parameters=sim_params,
     )
 
